@@ -1,1 +1,20 @@
-{}
+{
+  "whitecloud_kig": {
+    "id": "whitecloud_kig",
+    "name": "星雲",
+    "bio": "是個娃\n也是半個攝影",
+    "profileImage": "https://pbs.twimg.com/profile_images/1957019682978045952/zwJXKwdR_normal.jpg",
+    "isActive": true,
+    "socialMedia": {
+      "instagram": null,
+      "twitter": "https://twitter.com/whitecloud_kig",
+      "facebook": null,
+      "tiktok": null,
+      "pixiv": null,
+      "website": null
+    },
+    "Characters": [],
+    "createdAt": "2025-08-19T02:04:47.fZ",
+    "updatedAt": "2025-08-19T02:04:47.fZ"
+  }
+}
