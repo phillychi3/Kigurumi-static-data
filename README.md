@@ -69,7 +69,7 @@
     "Characters": [
       {
         "characterId": "Ganyu",
-        "maker":"example"
+        "maker":"example",
         "images": [
           "https://example.com/profile.jpg"
         ]
