@@ -11,3 +11,11 @@ insert_final_newline = false
 [*.json]
 indent_style = space
 indent_size = 2
+
+[*.yaml]
+indent_style = space
+indent_size = 2
+
+[*.yml]
+indent_style = space
+indent_size = 2

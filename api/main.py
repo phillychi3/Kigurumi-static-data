@@ -1,8 +1,11 @@
-from fastapi import FastAPI, HTTPException
-from typing import Dict, Any
-import json
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
+from contextlib import asynccontextmanager
+import sys
 import os
-import time
 
 from .models import (
     Kiger,
@@ -11,8 +14,28 @@ from .models import (
     CrawlTwitterUserRequest,
     CrawlTwitterTweetRequest,
 )
-from .github_service import create_github_pr
-import sys
+from .database import (
+    get_db,
+    init_db,
+    PendingKiger,
+    PendingCharacter,
+    PendingMaker,
+    Kiger as DBKiger,
+    Character as DBCharacter,
+    Maker as DBMaker,
+    KigerCharacter,
+)
+from .auth import (
+    get_current_admin,
+    authenticate_admin,
+    create_access_token,
+)
+from .cache import (
+    get_cache,
+    set_cache,
+    delete_cache,
+    invalidate_cache_by_prefix,
+)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from crawler import (
@@ -22,12 +45,18 @@ from crawler import (
 )
 
 
-app = FastAPI(title="Kigurumi Data API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+
+app = FastAPI(title="Kigurumi Data API", version="2.0.0", lifespan=lifespan)
 
 
 @app.get("/")
 async def root():
-    return {"message": "Kigurumi Static Data API"}
+    return {"message": "Kigurumi Static Data API v2.0 - Database Edition"}
 
 
 @app.post("/crawl/twitter/user")
@@ -51,57 +80,16 @@ async def crawl_twitter_user(request: CrawlTwitterUserRequest):
                 "twitter": f"https://twitter.com/{request.username}",
             },
             "Characters": [],
-            "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "createdAt": datetime.utcnow().isoformat() + "Z",
+            "updatedAt": datetime.utcnow().isoformat() + "Z",
         }
 
         return kiger_data
 
     except Exception as e:
-        raise Exception(f"Failed to fetch Twitter user: {str(e)}")
-
-
-async def save_kiger_with_pr(kiger_data: Dict[str, Any]) -> Dict[str, Any]:
-    file_path = "kiger.json"
-
-    try:
-        full_path = os.path.join(os.path.dirname(__file__), "..", file_path)
-        with open(full_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, dict):
-                data = {}
-    except (FileNotFoundError, json.JSONDecodeError):
-        data = {}
-
-    data[kiger_data["id"]] = kiger_data
-
-    commit_message = f"Add/Update Kiger: {kiger_data['name']} ({kiger_data['id']})"
-    pr_title = f"新增/更新 Kiger 資料: {kiger_data['name']}"
-    pr_body = f"""## 新增/更新 Kiger 資料
-
-**Kiger 資訊:**
-- ID: `{kiger_data['id']}`
-- 名稱: {kiger_data['name']}
-- 簡介: {kiger_data['bio']}
-- 狀態: {'活躍' if kiger_data['isActive'] else '非活躍'}
-- 角色數量: {len(kiger_data.get('Characters', []))}
-
-**社交媒體:**
-{f"- Twitter: {kiger_data['socialMedia'].get('twitter')}" if kiger_data.get('socialMedia', {}).get('twitter') else ''}
-{f"- Instagram: {kiger_data['socialMedia'].get('instagram')}" if kiger_data.get('socialMedia', {}).get('instagram') else ''}
-
-此 PR 由 Kigurumi Crawler API 自動生成。
-"""
-
-    result = await create_github_pr(
-        file_path=file_path,
-        new_data=data,
-        commit_message=commit_message,
-        pr_title=pr_title,
-        pr_body=pr_body,
-    )
-
-    return result
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch Twitter user: {str(e)}"
+        )
 
 
 @app.post("/crawl/twitter/tweet")
@@ -129,132 +117,608 @@ async def crawl_twitter_tweet(request: CrawlTwitterTweetRequest):
 
 
 @app.post("/kiger")
-async def save_kiger(kiger_data: Kiger):
+async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
     try:
-        result = await save_kiger_with_pr(kiger_data.model_dump())
+        kiger_dict = kiger_data.model_dump()
+
+        pending_kiger = PendingKiger(
+            id=kiger_dict["id"],
+            name=kiger_dict["name"],
+            bio=kiger_dict["bio"],
+            profile_image=kiger_dict.get("profileImage", ""),
+            position=kiger_dict.get("position", ""),
+            is_active=kiger_dict.get("isActive", True),
+            social_media=kiger_dict.get("socialMedia", {}),
+            characters=kiger_dict.get("Characters", []),
+            status="pending",
+            submitted_at=datetime.utcnow(),
+        )
+
+        result = await db.execute(
+            select(PendingKiger).where(PendingKiger.id == kiger_dict["id"])
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.name = pending_kiger.name
+            existing.bio = pending_kiger.bio
+            existing.profile_image = pending_kiger.profile_image
+            existing.position = pending_kiger.position
+            existing.is_active = pending_kiger.is_active
+            existing.social_media = pending_kiger.social_media
+            existing.characters = pending_kiger.characters
+            existing.status = "pending"
+            existing.submitted_at = datetime.utcnow()
+        else:
+            db.add(pending_kiger)
+
+        await db.commit()
+
         return {
-            "message": f"Kiger {kiger_data.id} PR created successfully",
-            "pr_url": result["pr_url"],
-            "pr_number": result["pr_number"],
+            "message": f"Kiger {kiger_data.id} 已提交待審核",
+            "status": "pending",
+            "id": kiger_data.id,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save kiger: {str(e)}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to submit kiger: {str(e)}")
 
 
 @app.post("/character")
-async def save_character(character_data: Character):
+async def submit_character(
+    character_data: Character, db: AsyncSession = Depends(get_db)
+):
     try:
         character_dict = character_data.model_dump()
-        file_path = "character.json"
 
-        full_path = os.path.join(os.path.dirname(__file__), "..", file_path)
-        try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if not isinstance(data, dict):
-                    data = {}
-        except (FileNotFoundError, json.JSONDecodeError):
-            data = {}
-
-        character_id = character_data.originalName
-        data[character_id] = character_dict
-
-        commit_message = f"Add/Update Character: {character_data.name} ({character_data.originalName})"
-        pr_title = f"新增/更新角色資料: {character_data.name}"
-        pr_body = f"""## 新增/更新角色資料
-
-**角色資訊:**
-- 名稱: {character_data.name}
-- 原文名稱: {character_data.originalName}
-- 類型: {character_data.type}
-- 來源作品: {character_data.source.title} ({character_data.source.company})
-
-**官方圖片:**
-![{character_data.name}]({character_data.officialImage})
-
-此 PR 由 Kigurumi Crawler API 自動生成。
-"""
-
-        result = await create_github_pr(
-            file_path=file_path,
-            new_data=data,
-            commit_message=commit_message,
-            pr_title=pr_title,
-            pr_body=pr_body,
+        pending_character = PendingCharacter(
+            original_name=character_dict["originalName"],
+            name=character_dict["name"],
+            type=character_dict["type"],
+            official_image=character_dict.get("officialImage", ""),
+            source=character_dict.get("source", {})
+            if character_dict.get("source")
+            else None,
+            status="pending",
+            submitted_at=datetime.utcnow(),
         )
 
-        return {
-            "message": f"Character {character_data.name} PR created successfully",
-            "pr_url": result["pr_url"],
-            "pr_number": result["pr_number"],
-        }
+        result = await db.execute(
+            select(PendingCharacter).where(
+                PendingCharacter.original_name == character_dict["originalName"]
+            )
+        )
+        existing = result.scalar_one_or_none()
 
+        if existing:
+            existing.name = pending_character.name
+            existing.type = pending_character.type
+            existing.official_image = pending_character.official_image
+            existing.source = pending_character.source
+            existing.status = "pending"
+            existing.submitted_at = datetime.utcnow()
+        else:
+            db.add(pending_character)
+
+        await db.commit()
+
+        return {
+            "message": f"Character {character_data.name} 已提交待審核",
+            "status": "pending",
+            "id": character_data.originalName,
+        }
     except Exception as e:
+        await db.rollback()
         raise HTTPException(
-            status_code=500, detail=f"Failed to save character: {str(e)}"
+            status_code=500, detail=f"Failed to submit character: {str(e)}"
         )
 
 
 @app.post("/maker")
-async def save_maker(maker_data: Maker):
+async def submit_maker(maker_data: Maker, db: AsyncSession = Depends(get_db)):
+    """提交 Maker 資料，進入待審核狀態"""
     try:
         maker_dict = maker_data.model_dump()
-        file_path = "maker.json"
 
-        full_path = os.path.join(os.path.dirname(__file__), "..", file_path)
-        try:
-            with open(full_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if not isinstance(data, dict):
-                    data = {}
-        except (FileNotFoundError, json.JSONDecodeError):
-            data = {}
-
-        maker_id = maker_data.originalName
-        data[maker_id] = maker_dict
-
-        commit_message = (
-            f"Add/Update Maker: {maker_data.name} ({maker_data.originalName})"
-        )
-        pr_title = f"新增/更新製作商資料: {maker_data.name}"
-
-        twitter_line = (
-            f"- Twitter: {maker_data.socialMedia.twitter}"
-            if maker_data.socialMedia.twitter
-            else ""
-        )
-        website_line = (
-            f"- Website: {maker_data.socialMedia.website}"
-            if maker_data.socialMedia.website
-            else ""
+        pending_maker = PendingMaker(
+            original_name=maker_dict["originalName"],
+            name=maker_dict["name"],
+            avatar=maker_dict.get("Avatar", ""),
+            social_media=maker_dict.get("socialMedia", {})
+            if maker_dict.get("socialMedia")
+            else None,
+            status="pending",
+            submitted_at=datetime.utcnow(),
         )
 
-        pr_body = f"""## 新增/更新製作商資料
-
-**製作商資訊:**
-- 名稱: {maker_data.name}
-- 原文名稱: {maker_data.originalName}
-
-**社交媒體:**
-{twitter_line}
-{website_line}
-
-此 PR 由 Kigurumi Crawler API 自動生成。
-"""
-
-        result = await create_github_pr(
-            file_path=file_path,
-            new_data=data,
-            commit_message=commit_message,
-            pr_title=pr_title,
-            pr_body=pr_body,
+        result = await db.execute(
+            select(PendingMaker).where(
+                PendingMaker.original_name == maker_dict["originalName"]
+            )
         )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.name = pending_maker.name
+            existing.avatar = pending_maker.avatar
+            existing.social_media = pending_maker.social_media
+            existing.status = "pending"
+            existing.submitted_at = datetime.utcnow()
+        else:
+            db.add(pending_maker)
+
+        await db.commit()
 
         return {
-            "message": f"Maker {maker_data.name} PR created successfully",
-            "pr_url": result["pr_url"],
-            "pr_number": result["pr_number"],
+            "message": f"Maker {maker_data.name} 已提交待審核",
+            "status": "pending",
+            "id": maker_data.originalName,
+        }
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to submit maker: {str(e)}")
+
+
+@app.get("/kigers")
+async def get_all_kigers(db: AsyncSession = Depends(get_db)):
+    """取得所有 Kiger 資料（含快取）"""
+    cache_key = "all_kigers"
+
+    cached = get_cache(cache_key)
+    if cached:
+        return cached
+
+    result = await db.execute(select(DBKiger))
+    kigers = result.scalars().all()
+
+    kigers_list = []
+    for kiger in kigers:
+        kiger_dict = {
+            "id": kiger.id,
+            "name": kiger.name,
+            "bio": kiger.bio,
+            "profileImage": kiger.profile_image,
+            "position": kiger.position,
+            "isActive": kiger.is_active,
+            "socialMedia": kiger.social_media,
+            "createdAt": kiger.created_at.isoformat() + "Z"
+            if kiger.created_at
+            else None,
+            "updatedAt": kiger.updated_at.isoformat() + "Z"
+            if kiger.updated_at
+            else None,
+        }
+        kigers_list.append(kiger_dict)
+
+    set_cache(cache_key, kigers_list)
+
+    return kigers_list
+
+
+@app.get("/kiger/{kiger_id}")
+async def get_kiger(kiger_id: str, db: AsyncSession = Depends(get_db)):
+    """取得單一 Kiger 資料（含快取）"""
+    cache_key = f"kiger:{kiger_id}"
+
+    cached = get_cache(cache_key)
+    if cached:
+        return cached
+
+    result = await db.execute(select(DBKiger).where(DBKiger.id == kiger_id))
+    kiger = result.scalar_one_or_none()
+
+    if not kiger:
+        raise HTTPException(status_code=404, detail="Kiger not found")
+
+    characters_result = await db.execute(
+        select(KigerCharacter).where(KigerCharacter.kiger_id == kiger_id)
+    )
+    kiger_characters = characters_result.scalars().all()
+
+    characters_list = []
+    for kc in kiger_characters:
+        characters_list.append(
+            {
+                "characterId": kc.character_id,
+                "maker": kc.maker,
+                "images": kc.images or [],
+            }
+        )
+
+    kiger_dict = {
+        "id": kiger.id,
+        "name": kiger.name,
+        "bio": kiger.bio,
+        "profileImage": kiger.profile_image,
+        "position": kiger.position,
+        "isActive": kiger.is_active,
+        "socialMedia": kiger.social_media,
+        "Characters": characters_list,
+        "createdAt": kiger.created_at.isoformat() + "Z" if kiger.created_at else None,
+        "updatedAt": kiger.updated_at.isoformat() + "Z" if kiger.updated_at else None,
+    }
+
+    set_cache(cache_key, kiger_dict)
+
+    return kiger_dict
+
+
+@app.get("/characters")
+async def get_all_characters(db: AsyncSession = Depends(get_db)):
+    """取得所有 Character 資料（含快取）"""
+    cache_key = "all_characters"
+
+    cached = get_cache(cache_key)
+    if cached:
+        return cached
+
+    result = await db.execute(select(DBCharacter))
+    characters = result.scalars().all()
+
+    characters_list = []
+    for character in characters:
+        character_dict = {
+            "name": character.name,
+            "originalName": character.original_name,
+            "type": character.type,
+            "officialImage": character.official_image,
+            "source": character.source,
+        }
+        characters_list.append(character_dict)
+
+    set_cache(cache_key, characters_list)
+
+    return characters_list
+
+
+@app.get("/character/{character_id}")
+async def get_character(character_id: str, db: AsyncSession = Depends(get_db)):
+    """取得單一 Character 資料（含快取）"""
+    cache_key = f"character:{character_id}"
+
+    cached = get_cache(cache_key)
+    if cached:
+        return cached
+
+    result = await db.execute(
+        select(DBCharacter).where(DBCharacter.original_name == character_id)
+    )
+    character = result.scalar_one_or_none()
+
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    character_dict = {
+        "name": character.name,
+        "originalName": character.original_name,
+        "type": character.type,
+        "officialImage": character.official_image,
+        "source": character.source,
+    }
+
+    set_cache(cache_key, character_dict)
+
+    return character_dict
+
+
+@app.get("/makers")
+async def get_all_makers(db: AsyncSession = Depends(get_db)):
+    """取得所有 Maker 資料（含快取）"""
+    cache_key = "all_makers"
+
+    cached = get_cache(cache_key)
+    if cached:
+        return cached
+
+    result = await db.execute(select(DBMaker))
+    makers = result.scalars().all()
+
+    makers_list = []
+    for maker in makers:
+        maker_dict = {
+            "name": maker.name,
+            "originalName": maker.original_name,
+            "Avatar": maker.avatar,
+            "socialMedia": maker.social_media,
+        }
+        makers_list.append(maker_dict)
+
+    set_cache(cache_key, makers_list)
+
+    return makers_list
+
+
+@app.get("/maker/{maker_id}")
+async def get_maker(maker_id: str, db: AsyncSession = Depends(get_db)):
+    cache_key = f"maker:{maker_id}"
+
+    # 檢查快取
+    cached = get_cache(cache_key)
+    if cached:
+        return cached
+
+    result = await db.execute(select(DBMaker).where(DBMaker.original_name == maker_id))
+    maker = result.scalar_one_or_none()
+
+    if not maker:
+        raise HTTPException(status_code=404, detail="Maker not found")
+
+    maker_dict = {
+        "name": maker.name,
+        "originalName": maker.original_name,
+        "Avatar": maker.avatar,
+        "socialMedia": maker.social_media,
+    }
+
+    set_cache(cache_key, maker_dict)
+
+    return maker_dict
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/admin/login")
+async def admin_login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
+    admin = await authenticate_admin(db, request.username, request.password)
+
+    if not admin:
+        raise HTTPException(
+            status_code=401,
+            detail="帳號或密碼錯誤",
+        )
+
+    access_token = create_access_token(data={"sub": admin.username})
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "username": admin.username,
+    }
+
+
+@app.get("/admin/pending/kigers", dependencies=[Depends(get_current_admin)])
+async def get_pending_kigers(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(PendingKiger).where(PendingKiger.status == "pending")
+    )
+    pending_kigers = result.scalars().all()
+
+    return [
+        {
+            "id": pk.id,
+            "name": pk.name,
+            "bio": pk.bio,
+            "status": pk.status,
+            "submitted_at": pk.submitted_at.isoformat() if pk.submitted_at else None,
+        }
+        for pk in pending_kigers
+    ]
+
+
+@app.get("/admin/pending/characters", dependencies=[Depends(get_current_admin)])
+async def get_pending_characters(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(PendingCharacter).where(PendingCharacter.status == "pending")
+    )
+    pending_characters = result.scalars().all()
+
+    return [
+        {
+            "originalName": pc.original_name,
+            "name": pc.name,
+            "type": pc.type,
+            "status": pc.status,
+            "submitted_at": pc.submitted_at.isoformat() if pc.submitted_at else None,
+        }
+        for pc in pending_characters
+    ]
+
+
+@app.get("/admin/pending/makers", dependencies=[Depends(get_current_admin)])
+async def get_pending_makers(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(PendingMaker).where(PendingMaker.status == "pending")
+    )
+    pending_makers = result.scalars().all()
+
+    return [
+        {
+            "originalName": pm.original_name,
+            "name": pm.name,
+            "status": pm.status,
+            "submitted_at": pm.submitted_at.isoformat() if pm.submitted_at else None,
+        }
+        for pm in pending_makers
+    ]
+
+
+class ReviewRequest(BaseModel):
+    action: str  # "approve" or "reject"
+
+
+@app.post("/admin/review/kiger/{kiger_id}", dependencies=[Depends(get_current_admin)])
+async def review_kiger(
+    kiger_id: str, request: ReviewRequest, db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(PendingKiger).where(PendingKiger.id == kiger_id))
+    pending = result.scalar_one_or_none()
+
+    if not pending:
+        raise HTTPException(status_code=404, detail="Pending kiger not found")
+
+    if request.action == "approve":
+        existing_result = await db.execute(
+            select(DBKiger).where(DBKiger.id == kiger_id)
+        )
+        existing = existing_result.scalar_one_or_none()
+
+        if existing:
+            existing.name = pending.name
+            existing.bio = pending.bio
+            existing.profile_image = pending.profile_image
+            existing.position = pending.position
+            existing.is_active = pending.is_active
+            existing.social_media = pending.social_media
+            existing.updated_at = datetime.utcnow()
+        else:
+            new_kiger = DBKiger(
+                id=pending.id,
+                name=pending.name,
+                bio=pending.bio,
+                profile_image=pending.profile_image,
+                position=pending.position,
+                is_active=pending.is_active,
+                social_media=pending.social_media,
+            )
+            db.add(new_kiger)
+
+        if pending.characters:
+            await db.execute(
+                delete(KigerCharacter).where(KigerCharacter.kiger_id == kiger_id)
+            )
+            for char_ref in pending.characters:
+                kiger_char = KigerCharacter(
+                    kiger_id=kiger_id,
+                    character_id=char_ref.get("characterId"),
+                    maker=char_ref.get("maker"),
+                    images=char_ref.get("images", []),
+                )
+                db.add(kiger_char)
+
+        pending.status = "approved"
+        pending.reviewed_at = datetime.utcnow()
+        invalidate_cache_by_prefix("kiger:")
+        delete_cache("all_kigers")
+
+        await db.commit()
+
+        return {"message": f"Kiger {kiger_id} 已審核通過並發布", "status": "approved"}
+
+    elif request.action == "reject":
+        pending.status = "rejected"
+        pending.reviewed_at = datetime.utcnow()
+        await db.commit()
+
+        return {"message": f"Kiger {kiger_id} 已拒絕", "status": "rejected"}
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action")
+
+
+@app.post(
+    "/admin/review/character/{character_id}", dependencies=[Depends(get_current_admin)]
+)
+async def review_character(
+    character_id: str, request: ReviewRequest, db: AsyncSession = Depends(get_db)
+):
+    """審核 Character 資料"""
+    result = await db.execute(
+        select(PendingCharacter).where(PendingCharacter.original_name == character_id)
+    )
+    pending = result.scalar_one_or_none()
+
+    if not pending:
+        raise HTTPException(status_code=404, detail="Pending character not found")
+
+    if request.action == "approve":
+        existing_result = await db.execute(
+            select(DBCharacter).where(DBCharacter.original_name == character_id)
+        )
+        existing = existing_result.scalar_one_or_none()
+
+        if existing:
+            existing.name = pending.name
+            existing.type = pending.type
+            existing.official_image = pending.official_image
+            existing.source = pending.source
+            existing.updated_at = datetime.utcnow()
+        else:
+            new_character = DBCharacter(
+                original_name=pending.original_name,
+                name=pending.name,
+                type=pending.type,
+                official_image=pending.official_image,
+                source=pending.source,
+            )
+            db.add(new_character)
+        pending.status = "approved"
+        pending.reviewed_at = datetime.utcnow()
+        invalidate_cache_by_prefix("character:")
+        delete_cache("all_characters")
+
+        await db.commit()
+
+        return {
+            "message": f"Character {character_id} 已審核通過並發布",
+            "status": "approved",
         }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save maker: {str(e)}")
+    elif request.action == "reject":
+        pending.status = "rejected"
+        pending.reviewed_at = datetime.utcnow()
+        await db.commit()
+
+        return {"message": f"Character {character_id} 已拒絕", "status": "rejected"}
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action")
+
+
+@app.post("/admin/review/maker/{maker_id}", dependencies=[Depends(get_current_admin)])
+async def review_maker(
+    maker_id: str, request: ReviewRequest, db: AsyncSession = Depends(get_db)
+):
+    """審核 Maker 資料"""
+    # 查詢待審核資料
+    result = await db.execute(
+        select(PendingMaker).where(PendingMaker.original_name == maker_id)
+    )
+    pending = result.scalar_one_or_none()
+
+    if not pending:
+        raise HTTPException(status_code=404, detail="Pending maker not found")
+
+    if request.action == "approve":
+        existing_result = await db.execute(
+            select(DBMaker).where(DBMaker.original_name == maker_id)
+        )
+        existing = existing_result.scalar_one_or_none()
+
+        if existing:
+            existing.name = pending.name
+            existing.avatar = pending.avatar
+            existing.social_media = pending.social_media
+            existing.updated_at = datetime.utcnow()
+        else:
+            new_maker = DBMaker(
+                original_name=pending.original_name,
+                name=pending.name,
+                avatar=pending.avatar,
+                social_media=pending.social_media,
+            )
+            db.add(new_maker)
+
+        # 更新待審核狀態
+        pending.status = "approved"
+        pending.reviewed_at = datetime.utcnow()
+
+        # 清除相關快取
+        invalidate_cache_by_prefix("maker:")
+        delete_cache("all_makers")
+
+        await db.commit()
+
+        return {"message": f"Maker {maker_id} 已審核通過並發布", "status": "approved"}
+
+    elif request.action == "reject":
+        pending.status = "rejected"
+        pending.reviewed_at = datetime.utcnow()
+        await db.commit()
+
+        return {"message": f"Maker {maker_id} 已拒絕", "status": "rejected"}
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action")

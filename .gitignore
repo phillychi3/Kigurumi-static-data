@@ -1,3 +1,8 @@
 *.env
 __pycache__/
 .ruff-cache/
+data/
+
+# Docker
+*.log
+.docker/

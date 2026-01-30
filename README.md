@@ -1,11 +1,11 @@
-# 資料格式規範
+# Kigurumi Static Data API
+
+## 資料格式規範
 
 ## 檔案結構
 
-- `kiger.json` - Kiger 資料
-- `character.json` - 角色資料
 
-## Kiger 資料格式 (kiger.json)
+## Kiger 資料格式
 
 ```json
 {
