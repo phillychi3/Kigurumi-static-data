@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,7 @@ from .models import (
     Maker,
     CrawlTwitterUserRequest,
     CrawlTwitterTweetRequest,
+    CrawlImageRequest,
 )
 from .database import (
     get_db,
@@ -46,6 +48,7 @@ from .schemas import (
     MakerResponse,
     TwitterUserCrawlResponse,
     TwitterTweetCrawlResponse,
+    ImageCharacterCrawlResponse,
     LoginResponse,
     PendingKigerResponse,
     PendingCharacterResponse,
@@ -58,6 +61,7 @@ from crawler import (
     fetch_twitter_user,
     fetch_twitter_tweet,
     parse_character_from_tweet,
+    parse_character_image,
 )
 
 
@@ -68,6 +72,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Kigurumi Data API", version="2.0.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/", response_model=MessageResponse)
@@ -118,6 +129,10 @@ async def crawl_twitter_tweet(request: CrawlTwitterTweetRequest):
                     images.append(media.get("url", ""))
 
         character = await parse_character_from_tweet(tweet_data)
+        if not character:
+            raise HTTPException(
+                status_code=404, detail="No character information found in the tweet"
+            )
 
         return TwitterTweetCrawlResponse(
             character=character,
@@ -127,6 +142,34 @@ async def crawl_twitter_tweet(request: CrawlTwitterTweetRequest):
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to analyze tweet: {str(e)}"
+        )
+
+
+@app.post("/crawl/image", response_model=ImageCharacterCrawlResponse)
+async def crawl_image(request: CrawlImageRequest):
+    try:
+        if not request.image_url:
+            return ImageCharacterCrawlResponse(success=False, error="圖片 URL 不能為空")
+
+        if not request.image_url.startswith(("http://", "https://")):
+            return ImageCharacterCrawlResponse(
+                success=False,
+                error="無效的圖片 URL 格式，必須以 http:// 或 https:// 開頭",
+            )
+
+        character = await parse_character_image(request.image_url)
+
+        if character:
+            return ImageCharacterCrawlResponse(success=True, character=character)
+        else:
+            return ImageCharacterCrawlResponse(
+                success=False,
+                error="無法從圖片中識別出角色資訊，請確保圖片清晰且包含明確的角色形象",
+            )
+
+    except Exception as e:
+        return ImageCharacterCrawlResponse(
+            success=False, error=f"識別過程發生錯誤: {str(e)}"
         )
 
 
@@ -366,6 +409,7 @@ async def get_all_characters(db: AsyncSession = Depends(get_db)):
 
     characters_list = [
         CharacterResponse(
+            id=character.id,
             name=character.name,
             originalName=character.original_name,
             type=character.type,
@@ -381,7 +425,7 @@ async def get_all_characters(db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/character/{character_id}", response_model=CharacterResponse)
-async def get_character(character_id: str, db: AsyncSession = Depends(get_db)):
+async def get_character(character_id: int, db: AsyncSession = Depends(get_db)):
     """取得單一 Character 資料"""
     cache_key = f"character:{character_id}"
 
@@ -390,7 +434,7 @@ async def get_character(character_id: str, db: AsyncSession = Depends(get_db)):
         return cached
 
     result = await db.execute(
-        select(DBCharacter).where(DBCharacter.original_name == character_id)
+        select(DBCharacter).where(DBCharacter.id == character_id)
     )
     character = result.scalar_one_or_none()
 
@@ -398,6 +442,7 @@ async def get_character(character_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Character not found")
 
     character_response = CharacterResponse(
+        id=character.id,
         name=character.name,
         originalName=character.original_name,
         type=character.type,
@@ -424,6 +469,7 @@ async def get_all_makers(db: AsyncSession = Depends(get_db)):
 
     makers_list = [
         MakerResponse(
+            id=maker.id,
             name=maker.name,
             originalName=maker.original_name,
             Avatar=maker.avatar,
@@ -438,7 +484,7 @@ async def get_all_makers(db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/maker/{maker_id}", response_model=MakerResponse)
-async def get_maker(maker_id: str, db: AsyncSession = Depends(get_db)):
+async def get_maker(maker_id: int, db: AsyncSession = Depends(get_db)):
     cache_key = f"maker:{maker_id}"
 
     # 檢查快取
@@ -446,13 +492,14 @@ async def get_maker(maker_id: str, db: AsyncSession = Depends(get_db)):
     if cached:
         return cached
 
-    result = await db.execute(select(DBMaker).where(DBMaker.original_name == maker_id))
+    result = await db.execute(select(DBMaker).where(DBMaker.id == maker_id))
     maker = result.scalar_one_or_none()
 
     if not maker:
         raise HTTPException(status_code=404, detail="Maker not found")
 
     maker_response = MakerResponse(
+        id=maker.id,
         name=maker.name,
         originalName=maker.original_name,
         Avatar=maker.avatar,
@@ -504,6 +551,11 @@ async def get_pending_kigers(db: AsyncSession = Depends(get_db)):
             id=pk.id,
             name=pk.name,
             bio=pk.bio,
+            profileImage=pk.profile_image,
+            position=pk.position,
+            isActive=pk.is_active,
+            socialMedia=pk.social_media,
+            Characters=pk.characters or [],
             status=pk.status,
             submitted_at=pk.submitted_at.isoformat() if pk.submitted_at else None,
         )
@@ -524,9 +576,12 @@ async def get_pending_characters(db: AsyncSession = Depends(get_db)):
 
     return [
         PendingCharacterResponse(
+            id=pc.id,
             originalName=pc.original_name,
             name=pc.name,
             type=pc.type,
+            officialImage=pc.official_image,
+            source=pc.source,
             status=pc.status,
             submitted_at=pc.submitted_at.isoformat() if pc.submitted_at else None,
         )
@@ -547,8 +602,11 @@ async def get_pending_makers(db: AsyncSession = Depends(get_db)):
 
     return [
         PendingMakerResponse(
+            id=pm.id,
             originalName=pm.original_name,
             name=pm.name,
+            Avatar=pm.avatar,
+            socialMedia=pm.social_media,
             status=pm.status,
             submitted_at=pm.submitted_at.isoformat() if pm.submitted_at else None,
         )
@@ -641,11 +699,11 @@ async def review_kiger(
     dependencies=[Depends(get_current_admin)],
 )
 async def review_character(
-    character_id: str, request: ReviewRequest, db: AsyncSession = Depends(get_db)
+    character_id: int, request: ReviewRequest, db: AsyncSession = Depends(get_db)
 ):
     """審核 Character 資料"""
     result = await db.execute(
-        select(PendingCharacter).where(PendingCharacter.original_name == character_id)
+        select(PendingCharacter).where(PendingCharacter.id == character_id)
     )
     pending = result.scalar_one_or_none()
 
@@ -653,8 +711,9 @@ async def review_character(
         raise HTTPException(status_code=404, detail="Pending character not found")
 
     if request.action == "approve":
+        # 使用 original_name 檢查是否已存在（因為這是唯一鍵）
         existing_result = await db.execute(
-            select(DBCharacter).where(DBCharacter.original_name == character_id)
+            select(DBCharacter).where(DBCharacter.original_name == pending.original_name)
         )
         existing = existing_result.scalar_one_or_none()
 
@@ -704,12 +763,12 @@ async def review_character(
     dependencies=[Depends(get_current_admin)],
 )
 async def review_maker(
-    maker_id: str, request: ReviewRequest, db: AsyncSession = Depends(get_db)
+    maker_id: int, request: ReviewRequest, db: AsyncSession = Depends(get_db)
 ):
     """審核 Maker 資料"""
     # 查詢待審核資料
     result = await db.execute(
-        select(PendingMaker).where(PendingMaker.original_name == maker_id)
+        select(PendingMaker).where(PendingMaker.id == maker_id)
     )
     pending = result.scalar_one_or_none()
 
@@ -717,8 +776,9 @@ async def review_maker(
         raise HTTPException(status_code=404, detail="Pending maker not found")
 
     if request.action == "approve":
+        # 使用 original_name 檢查是否已存在（因為這是唯一鍵）
         existing_result = await db.execute(
-            select(DBMaker).where(DBMaker.original_name == maker_id)
+            select(DBMaker).where(DBMaker.original_name == pending.original_name)
         )
         existing = existing_result.scalar_one_or_none()
 

@@ -64,7 +64,8 @@ class Kiger(Base):
 class Character(Base):
     __tablename__ = "characters"
 
-    original_name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    original_name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(100))
     type: Mapped[str] = mapped_column(String(50))
     official_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -82,7 +83,8 @@ class Character(Base):
 class Maker(Base):
     __tablename__ = "makers"
 
-    original_name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    original_name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(100))
     avatar: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     social_media: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -97,8 +99,8 @@ class KigerCharacter(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     kiger_id: Mapped[str] = mapped_column(String(100), ForeignKey("kigers.id"))
-    character_id: Mapped[str] = mapped_column(
-        String(100), ForeignKey("characters.original_name")
+    character_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("characters.id")
     )
     maker: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
@@ -126,7 +128,8 @@ class PendingKiger(Base):
 class PendingCharacter(Base):
     __tablename__ = "pending_characters"
 
-    original_name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    original_name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(100))
     type: Mapped[str] = mapped_column(String(50))
     official_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -139,7 +142,8 @@ class PendingCharacter(Base):
 class PendingMaker(Base):
     __tablename__ = "pending_makers"
 
-    original_name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    original_name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(100))
     avatar: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     social_media: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

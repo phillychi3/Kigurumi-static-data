@@ -33,7 +33,7 @@ class KigerListItemResponse(BaseModel):
 class CharacterReferenceResponse(BaseModel):
     """角色引用回應（在 Kiger 詳情中使用）"""
 
-    characterId: str
+    characterId: int
     maker: Optional[str] = None
     images: List[str] = []
 
@@ -64,6 +64,7 @@ class SourceResponse(BaseModel):
 class CharacterResponse(BaseModel):
     """角色資料回應"""
 
+    id: int
     name: str
     originalName: str
     type: str
@@ -74,6 +75,7 @@ class CharacterResponse(BaseModel):
 class MakerResponse(BaseModel):
     """Maker 資料回應"""
 
+    id: int
     name: str
     originalName: str
     Avatar: Optional[str] = ""
@@ -102,6 +104,14 @@ class TwitterTweetCrawlResponse(BaseModel):
     images: List[str] = []
 
 
+class ImageCharacterCrawlResponse(BaseModel):
+    """圖片角色識別回應"""
+
+    success: bool
+    character: Optional[dict] = None
+    error: Optional[str] = None
+
+
 class LoginResponse(BaseModel):
     """登入回應"""
 
@@ -116,6 +126,11 @@ class PendingKigerResponse(BaseModel):
     id: str
     name: str
     bio: Optional[str] = ""
+    profileImage: Optional[str] = ""
+    position: Optional[str] = ""
+    isActive: bool = True
+    socialMedia: Optional[dict] = None
+    Characters: List[str] = []
     status: str
     submitted_at: Optional[str] = None
 
@@ -123,9 +138,12 @@ class PendingKigerResponse(BaseModel):
 class PendingCharacterResponse(BaseModel):
     """待審核 Character 回應"""
 
+    id: int
     originalName: str
     name: str
     type: str
+    officialImage: Optional[str] = ""
+    source: Optional[dict] = None
     status: str
     submitted_at: Optional[str] = None
 
@@ -133,8 +151,11 @@ class PendingCharacterResponse(BaseModel):
 class PendingMakerResponse(BaseModel):
     """待審核 Maker 回應"""
 
+    id: int
     originalName: str
     name: str
+    Avatar: Optional[str] = ""
+    socialMedia: Optional[dict] = None
     status: str
     submitted_at: Optional[str] = None
 
