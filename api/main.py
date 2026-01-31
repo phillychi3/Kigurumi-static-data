@@ -36,6 +36,22 @@ from .cache import (
     delete_cache,
     invalidate_cache_by_prefix,
 )
+from .schemas import (
+    MessageResponse,
+    SubmitResponse,
+    KigerListItemResponse,
+    KigerDetailResponse,
+    CharacterReferenceResponse,
+    CharacterResponse,
+    MakerResponse,
+    TwitterUserCrawlResponse,
+    TwitterTweetCrawlResponse,
+    LoginResponse,
+    PendingKigerResponse,
+    PendingCharacterResponse,
+    PendingMakerResponse,
+    ReviewResponse,
+)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from crawler import (
@@ -54,12 +70,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Kigurumi Data API", version="2.0.0", lifespan=lifespan)
 
 
-@app.get("/")
+@app.get("/", response_model=MessageResponse)
 async def root():
-    return {"message": "Kigurumi Static Data API v2.0 - Database Edition"}
+    return MessageResponse(message="Kigurumi Static Data API v2.0 - Database Edition")
 
 
-@app.post("/crawl/twitter/user")
+@app.post("/crawl/twitter/user", response_model=TwitterUserCrawlResponse)
 async def crawl_twitter_user(request: CrawlTwitterUserRequest):
     try:
         twitter_data = await fetch_twitter_user(request.username)
@@ -69,22 +85,20 @@ async def crawl_twitter_user(request: CrawlTwitterUserRequest):
         bio = twitter_data.get("description", "")
         profile_image = twitter_data.get("profile_image_url", "")
 
-        kiger_data = {
-            "id": user_id,
-            "name": name,
-            "bio": bio,
-            "profileImage": profile_image,
-            "position": "",
-            "isActive": True,
-            "socialMedia": {
+        return TwitterUserCrawlResponse(
+            id=user_id,
+            name=name,
+            bio=bio,
+            profileImage=profile_image,
+            position="",
+            isActive=True,
+            socialMedia={
                 "twitter": f"https://twitter.com/{request.username}",
             },
-            "Characters": [],
-            "createdAt": datetime.utcnow().isoformat() + "Z",
-            "updatedAt": datetime.utcnow().isoformat() + "Z",
-        }
-
-        return kiger_data
+            Characters=[],
+            createdAt=datetime.utcnow().isoformat() + "Z",
+            updatedAt=datetime.utcnow().isoformat() + "Z",
+        )
 
     except Exception as e:
         raise HTTPException(
@@ -92,7 +106,7 @@ async def crawl_twitter_user(request: CrawlTwitterUserRequest):
         )
 
 
-@app.post("/crawl/twitter/tweet")
+@app.post("/crawl/twitter/tweet", response_model=TwitterTweetCrawlResponse)
 async def crawl_twitter_tweet(request: CrawlTwitterTweetRequest):
     try:
         tweet_data = await fetch_twitter_tweet(request.username, request.tweet_id)
@@ -105,10 +119,10 @@ async def crawl_twitter_tweet(request: CrawlTwitterTweetRequest):
 
         character = await parse_character_from_tweet(tweet_data)
 
-        return {
-            "character": character,
-            "images": images,
-        }
+        return TwitterTweetCrawlResponse(
+            character=character,
+            images=images,
+        )
 
     except Exception as e:
         raise HTTPException(
@@ -116,7 +130,7 @@ async def crawl_twitter_tweet(request: CrawlTwitterTweetRequest):
         )
 
 
-@app.post("/kiger")
+@app.post("/kiger", response_model=SubmitResponse)
 async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
     try:
         kiger_dict = kiger_data.model_dump()
@@ -154,17 +168,17 @@ async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
 
         await db.commit()
 
-        return {
-            "message": f"Kiger {kiger_data.id} 已提交待審核",
-            "status": "pending",
-            "id": kiger_data.id,
-        }
+        return SubmitResponse(
+            message=f"Kiger {kiger_data.id} submitted for review",
+            status="pending",
+            id=kiger_data.id,
+        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to submit kiger: {str(e)}")
 
 
-@app.post("/character")
+@app.post("/character", response_model=SubmitResponse)
 async def submit_character(
     character_data: Character, db: AsyncSession = Depends(get_db)
 ):
@@ -202,11 +216,11 @@ async def submit_character(
 
         await db.commit()
 
-        return {
-            "message": f"Character {character_data.name} 已提交待審核",
-            "status": "pending",
-            "id": character_data.originalName,
-        }
+        return SubmitResponse(
+            message=f"Character {character_data.name} submitted for review",
+            status="pending",
+            id=character_data.originalName,
+        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -214,7 +228,7 @@ async def submit_character(
         )
 
 
-@app.post("/maker")
+@app.post("/maker", response_model=SubmitResponse)
 async def submit_maker(maker_data: Maker, db: AsyncSession = Depends(get_db)):
     """提交 Maker 資料，進入待審核狀態"""
     try:
@@ -249,19 +263,19 @@ async def submit_maker(maker_data: Maker, db: AsyncSession = Depends(get_db)):
 
         await db.commit()
 
-        return {
-            "message": f"Maker {maker_data.name} 已提交待審核",
-            "status": "pending",
-            "id": maker_data.originalName,
-        }
+        return SubmitResponse(
+            message=f"Maker {maker_data.name} submitted for review",
+            status="pending",
+            id=maker_data.originalName,
+        )
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to submit maker: {str(e)}")
 
 
-@app.get("/kigers")
+@app.get("/kigers", response_model=list[KigerListItemResponse])
 async def get_all_kigers(db: AsyncSession = Depends(get_db)):
-    """取得所有 Kiger 資料（含快取）"""
+    """取得所有 Kiger 資料"""
     cache_key = "all_kigers"
 
     cached = get_cache(cache_key)
@@ -271,33 +285,29 @@ async def get_all_kigers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(DBKiger))
     kigers = result.scalars().all()
 
-    kigers_list = []
-    for kiger in kigers:
-        kiger_dict = {
-            "id": kiger.id,
-            "name": kiger.name,
-            "bio": kiger.bio,
-            "profileImage": kiger.profile_image,
-            "position": kiger.position,
-            "isActive": kiger.is_active,
-            "socialMedia": kiger.social_media,
-            "createdAt": kiger.created_at.isoformat() + "Z"
-            if kiger.created_at
-            else None,
-            "updatedAt": kiger.updated_at.isoformat() + "Z"
-            if kiger.updated_at
-            else None,
-        }
-        kigers_list.append(kiger_dict)
+    kigers_list = [
+        KigerListItemResponse(
+            id=kiger.id,
+            name=kiger.name,
+            bio=kiger.bio,
+            profileImage=kiger.profile_image,
+            position=kiger.position,
+            isActive=kiger.is_active,
+            socialMedia=kiger.social_media,
+            createdAt=kiger.created_at.isoformat() + "Z" if kiger.created_at else None,
+            updatedAt=kiger.updated_at.isoformat() + "Z" if kiger.updated_at else None,
+        )
+        for kiger in kigers
+    ]
 
-    set_cache(cache_key, kigers_list)
+    set_cache(cache_key, [k.model_dump() for k in kigers_list])
 
     return kigers_list
 
 
-@app.get("/kiger/{kiger_id}")
+@app.get("/kiger/{kiger_id}", response_model=KigerDetailResponse)
 async def get_kiger(kiger_id: str, db: AsyncSession = Depends(get_db)):
-    """取得單一 Kiger 資料（含快取）"""
+    """取得單一 Kiger 資料"""
     cache_key = f"kiger:{kiger_id}"
 
     cached = get_cache(cache_key)
@@ -315,37 +325,36 @@ async def get_kiger(kiger_id: str, db: AsyncSession = Depends(get_db)):
     )
     kiger_characters = characters_result.scalars().all()
 
-    characters_list = []
-    for kc in kiger_characters:
-        characters_list.append(
-            {
-                "characterId": kc.character_id,
-                "maker": kc.maker,
-                "images": kc.images or [],
-            }
+    characters_list = [
+        CharacterReferenceResponse(
+            characterId=kc.character_id,
+            maker=kc.maker,
+            images=kc.images or [],
         )
+        for kc in kiger_characters
+    ]
 
-    kiger_dict = {
-        "id": kiger.id,
-        "name": kiger.name,
-        "bio": kiger.bio,
-        "profileImage": kiger.profile_image,
-        "position": kiger.position,
-        "isActive": kiger.is_active,
-        "socialMedia": kiger.social_media,
-        "Characters": characters_list,
-        "createdAt": kiger.created_at.isoformat() + "Z" if kiger.created_at else None,
-        "updatedAt": kiger.updated_at.isoformat() + "Z" if kiger.updated_at else None,
-    }
+    kiger_response = KigerDetailResponse(
+        id=kiger.id,
+        name=kiger.name,
+        bio=kiger.bio,
+        profileImage=kiger.profile_image,
+        position=kiger.position,
+        isActive=kiger.is_active,
+        socialMedia=kiger.social_media,
+        Characters=characters_list,
+        createdAt=kiger.created_at.isoformat() + "Z" if kiger.created_at else None,
+        updatedAt=kiger.updated_at.isoformat() + "Z" if kiger.updated_at else None,
+    )
 
-    set_cache(cache_key, kiger_dict)
+    set_cache(cache_key, kiger_response.model_dump())
 
-    return kiger_dict
+    return kiger_response
 
 
-@app.get("/characters")
+@app.get("/characters", response_model=list[CharacterResponse])
 async def get_all_characters(db: AsyncSession = Depends(get_db)):
-    """取得所有 Character 資料（含快取）"""
+    """取得所有 Character 資料"""
     cache_key = "all_characters"
 
     cached = get_cache(cache_key)
@@ -355,25 +364,25 @@ async def get_all_characters(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(DBCharacter))
     characters = result.scalars().all()
 
-    characters_list = []
-    for character in characters:
-        character_dict = {
-            "name": character.name,
-            "originalName": character.original_name,
-            "type": character.type,
-            "officialImage": character.official_image,
-            "source": character.source,
-        }
-        characters_list.append(character_dict)
+    characters_list = [
+        CharacterResponse(
+            name=character.name,
+            originalName=character.original_name,
+            type=character.type,
+            officialImage=character.official_image,
+            source=character.source,
+        )
+        for character in characters
+    ]
 
-    set_cache(cache_key, characters_list)
+    set_cache(cache_key, [c.model_dump() for c in characters_list])
 
     return characters_list
 
 
-@app.get("/character/{character_id}")
+@app.get("/character/{character_id}", response_model=CharacterResponse)
 async def get_character(character_id: str, db: AsyncSession = Depends(get_db)):
-    """取得單一 Character 資料（含快取）"""
+    """取得單一 Character 資料"""
     cache_key = f"character:{character_id}"
 
     cached = get_cache(cache_key)
@@ -388,22 +397,22 @@ async def get_character(character_id: str, db: AsyncSession = Depends(get_db)):
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
 
-    character_dict = {
-        "name": character.name,
-        "originalName": character.original_name,
-        "type": character.type,
-        "officialImage": character.official_image,
-        "source": character.source,
-    }
+    character_response = CharacterResponse(
+        name=character.name,
+        originalName=character.original_name,
+        type=character.type,
+        officialImage=character.official_image,
+        source=character.source,
+    )
 
-    set_cache(cache_key, character_dict)
+    set_cache(cache_key, character_response.model_dump())
 
-    return character_dict
+    return character_response
 
 
-@app.get("/makers")
+@app.get("/makers", response_model=list[MakerResponse])
 async def get_all_makers(db: AsyncSession = Depends(get_db)):
-    """取得所有 Maker 資料（含快取）"""
+    """取得所有 Maker 資料"""
     cache_key = "all_makers"
 
     cached = get_cache(cache_key)
@@ -413,22 +422,22 @@ async def get_all_makers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(DBMaker))
     makers = result.scalars().all()
 
-    makers_list = []
-    for maker in makers:
-        maker_dict = {
-            "name": maker.name,
-            "originalName": maker.original_name,
-            "Avatar": maker.avatar,
-            "socialMedia": maker.social_media,
-        }
-        makers_list.append(maker_dict)
+    makers_list = [
+        MakerResponse(
+            name=maker.name,
+            originalName=maker.original_name,
+            Avatar=maker.avatar,
+            socialMedia=maker.social_media,
+        )
+        for maker in makers
+    ]
 
-    set_cache(cache_key, makers_list)
+    set_cache(cache_key, [m.model_dump() for m in makers_list])
 
     return makers_list
 
 
-@app.get("/maker/{maker_id}")
+@app.get("/maker/{maker_id}", response_model=MakerResponse)
 async def get_maker(maker_id: str, db: AsyncSession = Depends(get_db)):
     cache_key = f"maker:{maker_id}"
 
@@ -443,16 +452,16 @@ async def get_maker(maker_id: str, db: AsyncSession = Depends(get_db)):
     if not maker:
         raise HTTPException(status_code=404, detail="Maker not found")
 
-    maker_dict = {
-        "name": maker.name,
-        "originalName": maker.original_name,
-        "Avatar": maker.avatar,
-        "socialMedia": maker.social_media,
-    }
+    maker_response = MakerResponse(
+        name=maker.name,
+        originalName=maker.original_name,
+        Avatar=maker.avatar,
+        socialMedia=maker.social_media,
+    )
 
-    set_cache(cache_key, maker_dict)
+    set_cache(cache_key, maker_response.model_dump())
 
-    return maker_dict
+    return maker_response
 
 
 class LoginRequest(BaseModel):
@@ -460,26 +469,30 @@ class LoginRequest(BaseModel):
     password: str
 
 
-@app.post("/admin/login")
+@app.post("/admin/login", response_model=LoginResponse)
 async def admin_login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     admin = await authenticate_admin(db, request.username, request.password)
 
     if not admin:
         raise HTTPException(
             status_code=401,
-            detail="帳號或密碼錯誤",
+            detail="Invalid username or password",
         )
 
     access_token = create_access_token(data={"sub": admin.username})
 
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "username": admin.username,
-    }
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        username=admin.username,
+    )
 
 
-@app.get("/admin/pending/kigers", dependencies=[Depends(get_current_admin)])
+@app.get(
+    "/admin/pending/kigers",
+    response_model=list[PendingKigerResponse],
+    dependencies=[Depends(get_current_admin)],
+)
 async def get_pending_kigers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(PendingKiger).where(PendingKiger.status == "pending")
@@ -487,18 +500,22 @@ async def get_pending_kigers(db: AsyncSession = Depends(get_db)):
     pending_kigers = result.scalars().all()
 
     return [
-        {
-            "id": pk.id,
-            "name": pk.name,
-            "bio": pk.bio,
-            "status": pk.status,
-            "submitted_at": pk.submitted_at.isoformat() if pk.submitted_at else None,
-        }
+        PendingKigerResponse(
+            id=pk.id,
+            name=pk.name,
+            bio=pk.bio,
+            status=pk.status,
+            submitted_at=pk.submitted_at.isoformat() if pk.submitted_at else None,
+        )
         for pk in pending_kigers
     ]
 
 
-@app.get("/admin/pending/characters", dependencies=[Depends(get_current_admin)])
+@app.get(
+    "/admin/pending/characters",
+    response_model=list[PendingCharacterResponse],
+    dependencies=[Depends(get_current_admin)],
+)
 async def get_pending_characters(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(PendingCharacter).where(PendingCharacter.status == "pending")
@@ -506,18 +523,22 @@ async def get_pending_characters(db: AsyncSession = Depends(get_db)):
     pending_characters = result.scalars().all()
 
     return [
-        {
-            "originalName": pc.original_name,
-            "name": pc.name,
-            "type": pc.type,
-            "status": pc.status,
-            "submitted_at": pc.submitted_at.isoformat() if pc.submitted_at else None,
-        }
+        PendingCharacterResponse(
+            originalName=pc.original_name,
+            name=pc.name,
+            type=pc.type,
+            status=pc.status,
+            submitted_at=pc.submitted_at.isoformat() if pc.submitted_at else None,
+        )
         for pc in pending_characters
     ]
 
 
-@app.get("/admin/pending/makers", dependencies=[Depends(get_current_admin)])
+@app.get(
+    "/admin/pending/makers",
+    response_model=list[PendingMakerResponse],
+    dependencies=[Depends(get_current_admin)],
+)
 async def get_pending_makers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(PendingMaker).where(PendingMaker.status == "pending")
@@ -525,12 +546,12 @@ async def get_pending_makers(db: AsyncSession = Depends(get_db)):
     pending_makers = result.scalars().all()
 
     return [
-        {
-            "originalName": pm.original_name,
-            "name": pm.name,
-            "status": pm.status,
-            "submitted_at": pm.submitted_at.isoformat() if pm.submitted_at else None,
-        }
+        PendingMakerResponse(
+            originalName=pm.original_name,
+            name=pm.name,
+            status=pm.status,
+            submitted_at=pm.submitted_at.isoformat() if pm.submitted_at else None,
+        )
         for pm in pending_makers
     ]
 
@@ -539,7 +560,11 @@ class ReviewRequest(BaseModel):
     action: str  # "approve" or "reject"
 
 
-@app.post("/admin/review/kiger/{kiger_id}", dependencies=[Depends(get_current_admin)])
+@app.post(
+    "/admin/review/kiger/{kiger_id}",
+    response_model=ReviewResponse,
+    dependencies=[Depends(get_current_admin)],
+)
 async def review_kiger(
     kiger_id: str, request: ReviewRequest, db: AsyncSession = Depends(get_db)
 ):
@@ -595,21 +620,25 @@ async def review_kiger(
 
         await db.commit()
 
-        return {"message": f"Kiger {kiger_id} 已審核通過並發布", "status": "approved"}
+        return ReviewResponse(
+            message=f"Kiger {kiger_id} approved and published", status="approved"
+        )
 
     elif request.action == "reject":
         pending.status = "rejected"
         pending.reviewed_at = datetime.utcnow()
         await db.commit()
 
-        return {"message": f"Kiger {kiger_id} 已拒絕", "status": "rejected"}
+        return ReviewResponse(message=f"Kiger {kiger_id} rejected", status="rejected")
 
     else:
         raise HTTPException(status_code=400, detail="Invalid action")
 
 
 @app.post(
-    "/admin/review/character/{character_id}", dependencies=[Depends(get_current_admin)]
+    "/admin/review/character/{character_id}",
+    response_model=ReviewResponse,
+    dependencies=[Depends(get_current_admin)],
 )
 async def review_character(
     character_id: str, request: ReviewRequest, db: AsyncSession = Depends(get_db)
@@ -651,23 +680,29 @@ async def review_character(
 
         await db.commit()
 
-        return {
-            "message": f"Character {character_id} 已審核通過並發布",
-            "status": "approved",
-        }
+        return ReviewResponse(
+            message=f"Character {character_id} approved and published",
+            status="approved",
+        )
 
     elif request.action == "reject":
         pending.status = "rejected"
         pending.reviewed_at = datetime.utcnow()
         await db.commit()
 
-        return {"message": f"Character {character_id} 已拒絕", "status": "rejected"}
+        return ReviewResponse(
+            message=f"Character {character_id} rejected", status="rejected"
+        )
 
     else:
         raise HTTPException(status_code=400, detail="Invalid action")
 
 
-@app.post("/admin/review/maker/{maker_id}", dependencies=[Depends(get_current_admin)])
+@app.post(
+    "/admin/review/maker/{maker_id}",
+    response_model=ReviewResponse,
+    dependencies=[Depends(get_current_admin)],
+)
 async def review_maker(
     maker_id: str, request: ReviewRequest, db: AsyncSession = Depends(get_db)
 ):
@@ -711,14 +746,16 @@ async def review_maker(
 
         await db.commit()
 
-        return {"message": f"Maker {maker_id} 已審核通過並發布", "status": "approved"}
+        return ReviewResponse(
+            message=f"Maker {maker_id} approved and published", status="approved"
+        )
 
     elif request.action == "reject":
         pending.status = "rejected"
         pending.reviewed_at = datetime.utcnow()
         await db.commit()
 
-        return {"message": f"Maker {maker_id} 已拒絕", "status": "rejected"}
+        return ReviewResponse(message=f"Maker {maker_id} rejected", status="rejected")
 
     else:
         raise HTTPException(status_code=400, detail="Invalid action")
