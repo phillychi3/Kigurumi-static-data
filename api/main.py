@@ -433,9 +433,7 @@ async def get_character(character_id: int, db: AsyncSession = Depends(get_db)):
     if cached:
         return cached
 
-    result = await db.execute(
-        select(DBCharacter).where(DBCharacter.id == character_id)
-    )
+    result = await db.execute(select(DBCharacter).where(DBCharacter.id == character_id))
     character = result.scalar_one_or_none()
 
     if not character:
@@ -711,9 +709,10 @@ async def review_character(
         raise HTTPException(status_code=404, detail="Pending character not found")
 
     if request.action == "approve":
-        # 使用 original_name 檢查是否已存在（因為這是唯一鍵）
         existing_result = await db.execute(
-            select(DBCharacter).where(DBCharacter.original_name == pending.original_name)
+            select(DBCharacter).where(
+                DBCharacter.original_name == pending.original_name
+            )
         )
         existing = existing_result.scalar_one_or_none()
 
@@ -766,17 +765,13 @@ async def review_maker(
     maker_id: int, request: ReviewRequest, db: AsyncSession = Depends(get_db)
 ):
     """審核 Maker 資料"""
-    # 查詢待審核資料
-    result = await db.execute(
-        select(PendingMaker).where(PendingMaker.id == maker_id)
-    )
+    result = await db.execute(select(PendingMaker).where(PendingMaker.id == maker_id))
     pending = result.scalar_one_or_none()
 
     if not pending:
         raise HTTPException(status_code=404, detail="Pending maker not found")
 
     if request.action == "approve":
-        # 使用 original_name 檢查是否已存在（因為這是唯一鍵）
         existing_result = await db.execute(
             select(DBMaker).where(DBMaker.original_name == pending.original_name)
         )
@@ -819,3 +814,179 @@ async def review_maker(
 
     else:
         raise HTTPException(status_code=400, detail="Invalid action")
+
+
+@app.put(
+    "/admin/kiger/{kiger_id}",
+    response_model=KigerDetailResponse,
+    dependencies=[Depends(get_current_admin)],
+)
+async def update_kiger(
+    kiger_id: str, kiger_data: Kiger, db: AsyncSession = Depends(get_db)
+):
+    """管理員直接修改 Kiger 資料"""
+    try:
+        result = await db.execute(select(DBKiger).where(DBKiger.id == kiger_id))
+        existing_kiger = result.scalar_one_or_none()
+
+        if not existing_kiger:
+            raise HTTPException(status_code=404, detail="Kiger not found")
+
+        kiger_dict = kiger_data.model_dump()
+
+        existing_kiger.name = kiger_dict["name"]
+        existing_kiger.bio = kiger_dict["bio"]
+        existing_kiger.profile_image = kiger_dict.get("profileImage", "")
+        existing_kiger.position = kiger_dict.get("position", "")
+        existing_kiger.is_active = kiger_dict.get("isActive", True)
+        existing_kiger.social_media = kiger_dict.get("socialMedia", {})
+        existing_kiger.updated_at = datetime.utcnow()
+
+        if "Characters" in kiger_dict and kiger_dict["Characters"]:
+            await db.execute(
+                delete(KigerCharacter).where(KigerCharacter.kiger_id == kiger_id)
+            )
+            for char_ref in kiger_dict["Characters"]:
+                kiger_char = KigerCharacter(
+                    kiger_id=kiger_id,
+                    character_id=char_ref.get("characterId"),
+                    maker=char_ref.get("maker"),
+                    images=char_ref.get("images", []),
+                )
+                db.add(kiger_char)
+
+        invalidate_cache_by_prefix("kiger:")
+        delete_cache("all_kigers")
+
+        await db.commit()
+
+        characters_result = await db.execute(
+            select(KigerCharacter).where(KigerCharacter.kiger_id == kiger_id)
+        )
+        kiger_characters = characters_result.scalars().all()
+
+        characters_list = [
+            CharacterReferenceResponse(
+                characterId=kc.character_id,
+                maker=kc.maker,
+                images=kc.images or [],
+            )
+            for kc in kiger_characters
+        ]
+
+        return KigerDetailResponse(
+            id=existing_kiger.id,
+            name=existing_kiger.name,
+            bio=existing_kiger.bio,
+            profileImage=existing_kiger.profile_image,
+            position=existing_kiger.position,
+            isActive=existing_kiger.is_active,
+            socialMedia=existing_kiger.social_media,
+            Characters=characters_list,
+            createdAt=existing_kiger.created_at.isoformat() + "Z"
+            if existing_kiger.created_at
+            else None,
+            updatedAt=existing_kiger.updated_at.isoformat() + "Z"
+            if existing_kiger.updated_at
+            else None,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update kiger: {str(e)}")
+
+
+@app.put(
+    "/admin/character/{character_id}",
+    response_model=CharacterResponse,
+    dependencies=[Depends(get_current_admin)],
+)
+async def update_character(
+    character_id: int, character_data: Character, db: AsyncSession = Depends(get_db)
+):
+    """管理員直接修改 Character 資料"""
+    try:
+        result = await db.execute(
+            select(DBCharacter).where(DBCharacter.id == character_id)
+        )
+        existing_character = result.scalar_one_or_none()
+
+        if not existing_character:
+            raise HTTPException(status_code=404, detail="Character not found")
+
+        character_dict = character_data.model_dump()
+
+        existing_character.name = character_dict["name"]
+        existing_character.original_name = character_dict["originalName"]
+        existing_character.type = character_dict["type"]
+        existing_character.official_image = character_dict.get("officialImage", "")
+        existing_character.source = character_dict.get("source")
+        existing_character.updated_at = datetime.utcnow()
+
+        invalidate_cache_by_prefix("character:")
+        delete_cache("all_characters")
+
+        await db.commit()
+
+        return CharacterResponse(
+            id=existing_character.id,
+            name=existing_character.name,
+            originalName=existing_character.original_name,
+            type=existing_character.type,
+            officialImage=existing_character.official_image,
+            source=existing_character.source,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update character: {str(e)}"
+        )
+
+
+@app.put(
+    "/admin/maker/{maker_id}",
+    response_model=MakerResponse,
+    dependencies=[Depends(get_current_admin)],
+)
+async def update_maker(
+    maker_id: int, maker_data: Maker, db: AsyncSession = Depends(get_db)
+):
+    """管理員直接修改 Maker 資料"""
+    try:
+        result = await db.execute(select(DBMaker).where(DBMaker.id == maker_id))
+        existing_maker = result.scalar_one_or_none()
+
+        if not existing_maker:
+            raise HTTPException(status_code=404, detail="Maker not found")
+
+        maker_dict = maker_data.model_dump()
+
+        existing_maker.name = maker_dict["name"]
+        existing_maker.original_name = maker_dict["originalName"]
+        existing_maker.avatar = maker_dict.get("Avatar", "")
+        existing_maker.social_media = maker_dict.get("socialMedia")
+        existing_maker.updated_at = datetime.utcnow()
+
+        invalidate_cache_by_prefix("maker:")
+        delete_cache("all_makers")
+
+        await db.commit()
+
+        return MakerResponse(
+            id=existing_maker.id,
+            name=existing_maker.name,
+            originalName=existing_maker.original_name,
+            Avatar=existing_maker.avatar,
+            socialMedia=existing_maker.social_media,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update maker: {str(e)}")
