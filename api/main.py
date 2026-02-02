@@ -1,65 +1,55 @@
-from fastapi import FastAPI, HTTPException, Depends
+import os
+import sys
+from contextlib import asynccontextmanager
+from datetime import datetime
+from uuid import uuid4
+
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from datetime import datetime
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
-from contextlib import asynccontextmanager
-import sys
-import os
 
+from .auth import authenticate_admin, create_access_token, get_current_admin
+from .cache import delete_cache, get_cache, invalidate_cache_by_prefix, set_cache
+from .database import Character as DBCharacter
+from .database import Kiger as DBKiger
+from .database import KigerCharacter
+from .database import Maker as DBMaker
+from .database import PendingCharacter, PendingKiger, PendingMaker, get_db, init_db
 from .models import (
-    Kiger,
     Character,
-    Maker,
-    CrawlTwitterUserRequest,
-    CrawlTwitterTweetRequest,
     CrawlImageRequest,
-)
-from .database import (
-    get_db,
-    init_db,
-    PendingKiger,
-    PendingCharacter,
-    PendingMaker,
-    Kiger as DBKiger,
-    Character as DBCharacter,
-    Maker as DBMaker,
-    KigerCharacter,
-)
-from .auth import (
-    get_current_admin,
-    authenticate_admin,
-    create_access_token,
-)
-from .cache import (
-    get_cache,
-    set_cache,
-    delete_cache,
-    invalidate_cache_by_prefix,
+    CrawlTwitterTweetRequest,
+    CrawlTwitterUserRequest,
+    Kiger,
+    Maker,
 )
 from .schemas import (
-    MessageResponse,
-    SubmitResponse,
-    KigerListItemResponse,
-    KigerDetailResponse,
     CharacterReferenceResponse,
     CharacterResponse,
-    MakerResponse,
-    TwitterUserCrawlResponse,
-    TwitterTweetCrawlResponse,
     ImageCharacterCrawlResponse,
+    KigerDetailResponse,
+    KigerListItemResponse,
     LoginResponse,
-    PendingKigerResponse,
+    MakerResponse,
+    MessageResponse,
     PendingCharacterResponse,
+    PendingKigerResponse,
     PendingMakerResponse,
     ReviewResponse,
+    SubmitResponse,
+    TwitterTweetCrawlResponse,
+    TwitterUserCrawlResponse,
 )
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from crawler import (
-    fetch_twitter_user,
     fetch_twitter_tweet,
+    fetch_twitter_user,
     parse_character_from_tweet,
     parse_character_image,
 )
@@ -72,6 +62,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Kigurumi Data API", version="2.0.0", lifespan=lifespan)
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -87,12 +80,13 @@ async def root():
 
 
 @app.post("/crawl/twitter/user", response_model=TwitterUserCrawlResponse)
-async def crawl_twitter_user(request: CrawlTwitterUserRequest):
+@limiter.limit("1/3seconds")
+async def crawl_twitter_user(payload: CrawlTwitterUserRequest, request: Request):
     try:
-        twitter_data = await fetch_twitter_user(request.username)
+        twitter_data = await fetch_twitter_user(payload.username)
 
-        user_id = request.username
-        name = twitter_data.get("name", request.username)
+        user_id = payload.username
+        name = twitter_data.get("name", payload.username)
         bio = twitter_data.get("description", "")
         profile_image = twitter_data.get("profile_image_url", "")
 
@@ -104,7 +98,7 @@ async def crawl_twitter_user(request: CrawlTwitterUserRequest):
             position="",
             isActive=True,
             socialMedia={
-                "twitter": f"https://twitter.com/{request.username}",
+                "twitter": f"https://twitter.com/{payload.username}",
             },
             Characters=[],
             createdAt=datetime.utcnow().isoformat() + "Z",
@@ -118,9 +112,10 @@ async def crawl_twitter_user(request: CrawlTwitterUserRequest):
 
 
 @app.post("/crawl/twitter/tweet", response_model=TwitterTweetCrawlResponse)
-async def crawl_twitter_tweet(request: CrawlTwitterTweetRequest):
+@limiter.limit("1/3seconds")
+async def crawl_twitter_tweet(payload: CrawlTwitterTweetRequest, request: Request):
     try:
-        tweet_data = await fetch_twitter_tweet(request.username, request.tweet_id)
+        tweet_data = await fetch_twitter_tweet(payload.username, payload.tweet_id)
 
         images = []
         if "media_extended" in tweet_data:
@@ -146,18 +141,19 @@ async def crawl_twitter_tweet(request: CrawlTwitterTweetRequest):
 
 
 @app.post("/crawl/image", response_model=ImageCharacterCrawlResponse)
-async def crawl_image(request: CrawlImageRequest):
+@limiter.limit("1/3seconds")
+async def crawl_image(payload: CrawlImageRequest, request: Request):
     try:
-        if not request.image_url:
+        if not payload.image_url:
             return ImageCharacterCrawlResponse(success=False, error="圖片 URL 不能為空")
 
-        if not request.image_url.startswith(("http://", "https://")):
+        if not payload.image_url.startswith(("http://", "https://")):
             return ImageCharacterCrawlResponse(
                 success=False,
                 error="無效的圖片 URL 格式，必須以 http:// 或 https:// 開頭",
             )
 
-        character = await parse_character_image(request.image_url)
+        character = await parse_character_image(payload.image_url)
 
         if character:
             return ImageCharacterCrawlResponse(success=True, character=character)
@@ -178,8 +174,10 @@ async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
     try:
         kiger_dict = kiger_data.model_dump()
 
+        kiger_id = str(uuid4())
+
         pending_kiger = PendingKiger(
-            id=kiger_dict["id"],
+            id=kiger_id,
             name=kiger_dict["name"],
             bio=kiger_dict["bio"],
             profile_image=kiger_dict.get("profileImage", ""),
@@ -192,7 +190,7 @@ async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
         )
 
         result = await db.execute(
-            select(PendingKiger).where(PendingKiger.id == kiger_dict["id"])
+            select(PendingKiger).where(PendingKiger.id == kiger_id)
         )
         existing = result.scalar_one_or_none()
 
@@ -212,9 +210,9 @@ async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
         await db.commit()
 
         return SubmitResponse(
-            message=f"Kiger {kiger_data.id} submitted for review",
+            message=f"Kiger {kiger_id} submitted for review",
             status="pending",
-            id=kiger_data.id,
+            id=kiger_id,
         )
     except Exception as e:
         await db.rollback()

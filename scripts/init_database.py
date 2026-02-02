@@ -4,20 +4,15 @@ import os
 import sys
 from pathlib import Path
 
-
 sys.path.append(str(Path(__file__).parent.parent))
 
-from api.database import (
-    init_db,
-    async_session_maker,
-    Admin,
-    Maker as DBMaker,
-    Character as DBCharacter,
-    Kiger as DBKiger,
-    KigerCharacter,
-    engine,
-)
 from api.auth import get_password_hash
+from api.database import Admin
+from api.database import Character as DBCharacter
+from api.database import Kiger as DBKiger
+from api.database import KigerCharacter
+from api.database import Maker as DBMaker
+from api.database import async_session_maker, engine, init_db
 
 
 async def migrate_makers_from_json():

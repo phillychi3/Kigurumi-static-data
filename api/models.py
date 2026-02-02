@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
 from typing import List, Optional
+
+from pydantic import BaseModel, Field
 
 
 class SocialMedia(BaseModel):
@@ -18,11 +19,14 @@ class Source(BaseModel):
 
 
 class Character(BaseModel):
+    id: Optional[int] = None
     name: str
     originalName: str
     type: str
     officialImage: str
     source: Source
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
 
 
 class CharacterReference(BaseModel):
@@ -32,7 +36,7 @@ class CharacterReference(BaseModel):
 
 
 class Kiger(BaseModel):
-    id: str
+    id: Optional[str] = None
     name: str
     bio: str
     profileImage: str
@@ -40,8 +44,8 @@ class Kiger(BaseModel):
     isActive: bool
     socialMedia: SocialMedia
     Characters: List[CharacterReference]
-    createdAt: str
-    updatedAt: str
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
 
 
 class MakerSocialMedia(BaseModel):
@@ -53,10 +57,13 @@ class MakerSocialMedia(BaseModel):
 
 
 class Maker(BaseModel):
+    id: Optional[int] = None
     name: str
     originalName: str
     Avatar: str
     socialMedia: MakerSocialMedia
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
 
 
 class CrawlTwitterUserRequest(BaseModel):
