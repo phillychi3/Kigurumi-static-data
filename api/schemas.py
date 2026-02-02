@@ -125,6 +125,7 @@ class PendingKigerResponse(BaseModel):
     """待審核 Kiger 回應"""
 
     id: str
+    referenceId: Optional[str] = None
     name: str
     bio: Optional[str] = ""
     profileImage: Optional[str] = ""
@@ -132,6 +133,7 @@ class PendingKigerResponse(BaseModel):
     isActive: bool = True
     socialMedia: Optional[dict] = None
     Characters: List[str] = []
+    changedFields: Optional[List[str]] = None
     status: str
     submitted_at: Optional[str] = None
 
@@ -145,6 +147,7 @@ class PendingCharacterResponse(BaseModel):
     type: str
     officialImage: Optional[str] = ""
     source: Optional[dict] = None
+    changedFields: Optional[List[str]] = None
     status: str
     submitted_at: Optional[str] = None
 
@@ -157,6 +160,7 @@ class PendingMakerResponse(BaseModel):
     name: str
     Avatar: Optional[str] = ""
     socialMedia: Optional[dict] = None
+    changedFields: Optional[List[str]] = None
     status: str
     submitted_at: Optional[str] = None
 

@@ -108,6 +108,7 @@ class PendingKiger(Base):
     __tablename__ = "pending_kigers"
 
     id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    reference_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     name: Mapped[str] = mapped_column(String(100))
     bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     profile_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
@@ -115,6 +116,8 @@ class PendingKiger(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     social_media: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     characters: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    auto_created_characters: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    changed_fields: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -124,11 +127,12 @@ class PendingCharacter(Base):
     __tablename__ = "pending_characters"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    original_name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    original_name: Mapped[str] = mapped_column(String(100), index=True)
     name: Mapped[str] = mapped_column(String(100))
     type: Mapped[str] = mapped_column(String(50))
     official_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     source: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    changed_fields: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -138,10 +142,11 @@ class PendingMaker(Base):
     __tablename__ = "pending_makers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    original_name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    original_name: Mapped[str] = mapped_column(String(100), index=True)
     name: Mapped[str] = mapped_column(String(100))
     avatar: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     social_media: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    changed_fields: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

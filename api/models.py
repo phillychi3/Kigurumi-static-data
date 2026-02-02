@@ -33,10 +33,12 @@ class CharacterReference(BaseModel):
     characterId: str
     maker: Optional[str] = None
     images: List[str]
+    characterData: Optional["Character"] = None
 
 
 class Kiger(BaseModel):
     id: Optional[str] = None
+    referenceId: Optional[str] = None
     name: str
     bio: str
     profileImage: str

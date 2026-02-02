@@ -175,9 +175,73 @@ async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
         kiger_dict = kiger_data.model_dump()
 
         kiger_id = str(uuid4())
+        reference_id = kiger_dict.get("referenceId")
+
+        changed_fields = None
+        if reference_id:
+            existing_result = await db.execute(
+                select(DBKiger).where(DBKiger.id == reference_id)
+            )
+            existing_official = existing_result.scalar_one_or_none()
+            if existing_official:
+                changed_fields = []
+                field_map = {
+                    "name": ("name", existing_official.name),
+                    "bio": ("bio", existing_official.bio),
+                    "profile_image": ("profileImage", existing_official.profile_image),
+                    "position": ("position", existing_official.position),
+                    "is_active": ("isActive", existing_official.is_active),
+                    "social_media": ("socialMedia", existing_official.social_media),
+                    "characters": ("Characters", None),
+                }
+                for db_field, (dict_key, official_val) in field_map.items():
+                    submitted_val = kiger_dict.get(dict_key)
+                    if db_field == "social_media":
+                        submitted_val = kiger_dict.get("socialMedia", {})
+                    if submitted_val != official_val:
+                        changed_fields.append(db_field)
+
+        # 檢查 Characters 引用的 character 是否存在，不存在則自動建立 PendingCharacter
+        auto_created_character_ids = []
+        for char_ref in kiger_dict.get("Characters", []):
+            char_id = char_ref.get("characterId")
+            if not char_id:
+                continue
+
+            existing_char = await db.execute(
+                select(DBCharacter).where(DBCharacter.id == int(char_id))
+            )
+            if existing_char.scalar_one_or_none():
+                continue
+
+            existing_pending = await db.execute(
+                select(PendingCharacter).where(
+                    PendingCharacter.original_name == str(char_id),
+                    PendingCharacter.status == "pending",
+                )
+            )
+            if existing_pending.scalar_one_or_none():
+                continue
+
+            char_data = char_ref.get("characterData")
+            if char_data:
+                pending_char = PendingCharacter(
+                    original_name=char_data.get("originalName", str(char_id)),
+                    name=char_data.get("name", ""),
+                    type=char_data.get("type", ""),
+                    official_image=char_data.get("officialImage", ""),
+                    source=char_data.get("source"),
+                    changed_fields=None,
+                    status="pending",
+                    submitted_at=datetime.utcnow(),
+                )
+                db.add(pending_char)
+                await db.flush()
+                auto_created_character_ids.append(pending_char.id)
 
         pending_kiger = PendingKiger(
             id=kiger_id,
+            reference_id=reference_id,
             name=kiger_dict["name"],
             bio=kiger_dict["bio"],
             profile_image=kiger_dict.get("profileImage", ""),
@@ -185,28 +249,13 @@ async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
             is_active=kiger_dict.get("isActive", True),
             social_media=kiger_dict.get("socialMedia", {}),
             characters=kiger_dict.get("Characters", []),
+            auto_created_characters=auto_created_character_ids or None,
+            changed_fields=changed_fields,
             status="pending",
             submitted_at=datetime.utcnow(),
         )
 
-        result = await db.execute(
-            select(PendingKiger).where(PendingKiger.id == kiger_id)
-        )
-        existing = result.scalar_one_or_none()
-
-        if existing:
-            existing.name = pending_kiger.name
-            existing.bio = pending_kiger.bio
-            existing.profile_image = pending_kiger.profile_image
-            existing.position = pending_kiger.position
-            existing.is_active = pending_kiger.is_active
-            existing.social_media = pending_kiger.social_media
-            existing.characters = pending_kiger.characters
-            existing.status = "pending"
-            existing.submitted_at = datetime.utcnow()
-        else:
-            db.add(pending_kiger)
-
+        db.add(pending_kiger)
         await db.commit()
 
         return SubmitResponse(
@@ -226,6 +275,32 @@ async def submit_character(
     try:
         character_dict = character_data.model_dump()
 
+        changed_fields = None
+        existing_result = await db.execute(
+            select(DBCharacter).where(
+                DBCharacter.original_name == character_dict["originalName"]
+            )
+        )
+        existing_official = existing_result.scalar_one_or_none()
+        if existing_official:
+            changed_fields = []
+            if character_dict["name"] != existing_official.name:
+                changed_fields.append("name")
+            if character_dict["type"] != existing_official.type:
+                changed_fields.append("type")
+            if (
+                character_dict.get("officialImage", "")
+                != existing_official.official_image
+            ):
+                changed_fields.append("official_image")
+            submitted_source = (
+                character_dict.get("source", {})
+                if character_dict.get("source")
+                else None
+            )
+            if submitted_source != existing_official.source:
+                changed_fields.append("source")
+
         pending_character = PendingCharacter(
             original_name=character_dict["originalName"],
             name=character_dict["name"],
@@ -234,27 +309,12 @@ async def submit_character(
             source=character_dict.get("source", {})
             if character_dict.get("source")
             else None,
+            changed_fields=changed_fields,
             status="pending",
             submitted_at=datetime.utcnow(),
         )
 
-        result = await db.execute(
-            select(PendingCharacter).where(
-                PendingCharacter.original_name == character_dict["originalName"]
-            )
-        )
-        existing = result.scalar_one_or_none()
-
-        if existing:
-            existing.name = pending_character.name
-            existing.type = pending_character.type
-            existing.official_image = pending_character.official_image
-            existing.source = pending_character.source
-            existing.status = "pending"
-            existing.submitted_at = datetime.utcnow()
-        else:
-            db.add(pending_character)
-
+        db.add(pending_character)
         await db.commit()
 
         return SubmitResponse(
@@ -275,6 +335,25 @@ async def submit_maker(maker_data: Maker, db: AsyncSession = Depends(get_db)):
     try:
         maker_dict = maker_data.model_dump()
 
+        changed_fields = None
+        existing_result = await db.execute(
+            select(DBMaker).where(DBMaker.original_name == maker_dict["originalName"])
+        )
+        existing_official = existing_result.scalar_one_or_none()
+        if existing_official:
+            changed_fields = []
+            if maker_dict["name"] != existing_official.name:
+                changed_fields.append("name")
+            if maker_dict.get("Avatar", "") != existing_official.avatar:
+                changed_fields.append("avatar")
+            submitted_sm = (
+                maker_dict.get("socialMedia", {})
+                if maker_dict.get("socialMedia")
+                else None
+            )
+            if submitted_sm != existing_official.social_media:
+                changed_fields.append("social_media")
+
         pending_maker = PendingMaker(
             original_name=maker_dict["originalName"],
             name=maker_dict["name"],
@@ -282,26 +361,12 @@ async def submit_maker(maker_data: Maker, db: AsyncSession = Depends(get_db)):
             social_media=maker_dict.get("socialMedia", {})
             if maker_dict.get("socialMedia")
             else None,
+            changed_fields=changed_fields,
             status="pending",
             submitted_at=datetime.utcnow(),
         )
 
-        result = await db.execute(
-            select(PendingMaker).where(
-                PendingMaker.original_name == maker_dict["originalName"]
-            )
-        )
-        existing = result.scalar_one_or_none()
-
-        if existing:
-            existing.name = pending_maker.name
-            existing.avatar = pending_maker.avatar
-            existing.social_media = pending_maker.social_media
-            existing.status = "pending"
-            existing.submitted_at = datetime.utcnow()
-        else:
-            db.add(pending_maker)
-
+        db.add(pending_maker)
         await db.commit()
 
         return SubmitResponse(
@@ -538,13 +603,16 @@ async def admin_login(request: LoginRequest, db: AsyncSession = Depends(get_db))
 )
 async def get_pending_kigers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(PendingKiger).where(PendingKiger.status == "pending")
+        select(PendingKiger)
+        .where(PendingKiger.status == "pending")
+        .order_by(PendingKiger.submitted_at.asc())
     )
     pending_kigers = result.scalars().all()
 
     return [
         PendingKigerResponse(
             id=pk.id,
+            referenceId=pk.reference_id,
             name=pk.name,
             bio=pk.bio,
             profileImage=pk.profile_image,
@@ -552,6 +620,7 @@ async def get_pending_kigers(db: AsyncSession = Depends(get_db)):
             isActive=pk.is_active,
             socialMedia=pk.social_media,
             Characters=pk.characters or [],
+            changedFields=pk.changed_fields,
             status=pk.status,
             submitted_at=pk.submitted_at.isoformat() if pk.submitted_at else None,
         )
@@ -566,7 +635,9 @@ async def get_pending_kigers(db: AsyncSession = Depends(get_db)):
 )
 async def get_pending_characters(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(PendingCharacter).where(PendingCharacter.status == "pending")
+        select(PendingCharacter)
+        .where(PendingCharacter.status == "pending")
+        .order_by(PendingCharacter.submitted_at.asc())
     )
     pending_characters = result.scalars().all()
 
@@ -578,6 +649,7 @@ async def get_pending_characters(db: AsyncSession = Depends(get_db)):
             type=pc.type,
             officialImage=pc.official_image,
             source=pc.source,
+            changedFields=pc.changed_fields,
             status=pc.status,
             submitted_at=pc.submitted_at.isoformat() if pc.submitted_at else None,
         )
@@ -592,7 +664,9 @@ async def get_pending_characters(db: AsyncSession = Depends(get_db)):
 )
 async def get_pending_makers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(PendingMaker).where(PendingMaker.status == "pending")
+        select(PendingMaker)
+        .where(PendingMaker.status == "pending")
+        .order_by(PendingMaker.submitted_at.asc())
     )
     pending_makers = result.scalars().all()
 
@@ -603,6 +677,7 @@ async def get_pending_makers(db: AsyncSession = Depends(get_db)):
             name=pm.name,
             Avatar=pm.avatar,
             socialMedia=pm.social_media,
+            changedFields=pm.changed_fields,
             status=pm.status,
             submitted_at=pm.submitted_at.isoformat() if pm.submitted_at else None,
         )
@@ -629,18 +704,26 @@ async def review_kiger(
         raise HTTPException(status_code=404, detail="Pending kiger not found")
 
     if request.action == "approve":
+        target_id = pending.reference_id or pending.id
         existing_result = await db.execute(
-            select(DBKiger).where(DBKiger.id == kiger_id)
+            select(DBKiger).where(DBKiger.id == target_id)
         )
         existing = existing_result.scalar_one_or_none()
 
         if existing:
-            existing.name = pending.name
-            existing.bio = pending.bio
-            existing.profile_image = pending.profile_image
-            existing.position = pending.position
-            existing.is_active = pending.is_active
-            existing.social_media = pending.social_media
+            fields_to_update = pending.changed_fields
+            if fields_to_update is None:
+                existing.name = pending.name
+                existing.bio = pending.bio
+                existing.profile_image = pending.profile_image
+                existing.position = pending.position
+                existing.is_active = pending.is_active
+                existing.social_media = pending.social_media
+            else:
+                for field in fields_to_update:
+                    if field == "characters":
+                        continue
+                    setattr(existing, field, getattr(pending, field))
             existing.updated_at = datetime.utcnow()
         else:
             new_kiger = DBKiger(
@@ -653,15 +736,69 @@ async def review_kiger(
                 social_media=pending.social_media,
             )
             db.add(new_kiger)
+            target_id = pending.id
 
-        if pending.characters:
+        # 連帶審核通過自動建立的 PendingCharacter
+        if pending.auto_created_characters:
+            for pc_id in pending.auto_created_characters:
+                pc_result = await db.execute(
+                    select(PendingCharacter).where(
+                        PendingCharacter.id == pc_id,
+                        PendingCharacter.status == "pending",
+                    )
+                )
+                pc = pc_result.scalar_one_or_none()
+                if not pc:
+                    continue
+
+                existing_char = await db.execute(
+                    select(DBCharacter).where(
+                        DBCharacter.original_name == pc.original_name
+                    )
+                )
+                if not existing_char.scalar_one_or_none():
+                    new_char = DBCharacter(
+                        original_name=pc.original_name,
+                        name=pc.name,
+                        type=pc.type,
+                        official_image=pc.official_image,
+                        source=pc.source,
+                    )
+                    db.add(new_char)
+                pc.status = "approved"
+                pc.reviewed_at = datetime.utcnow()
+            invalidate_cache_by_prefix("character:")
+            delete_cache("all_characters")
+            await db.flush()
+
+        should_update_characters = pending.changed_fields is None or "characters" in (
+            pending.changed_fields or []
+        )
+        if pending.characters and should_update_characters:
             await db.execute(
-                delete(KigerCharacter).where(KigerCharacter.kiger_id == kiger_id)
+                delete(KigerCharacter).where(KigerCharacter.kiger_id == target_id)
             )
             for char_ref in pending.characters:
+                char_id = char_ref.get("characterId")
+                char_result = await db.execute(
+                    select(DBCharacter).where(DBCharacter.id == int(char_id))
+                )
+                db_char = char_result.scalar_one_or_none()
+                if not db_char:
+                    char_data = char_ref.get("characterData", {})
+                    if char_data:
+                        char_result2 = await db.execute(
+                            select(DBCharacter).where(
+                                DBCharacter.original_name
+                                == char_data.get("originalName", str(char_id))
+                            )
+                        )
+                        db_char = char_result2.scalar_one_or_none()
+                if not db_char:
+                    continue
                 kiger_char = KigerCharacter(
-                    kiger_id=kiger_id,
-                    character_id=char_ref.get("characterId"),
+                    kiger_id=target_id,
+                    character_id=db_char.id,
                     maker=char_ref.get("maker"),
                     images=char_ref.get("images", []),
                 )
@@ -715,10 +852,14 @@ async def review_character(
         existing = existing_result.scalar_one_or_none()
 
         if existing:
-            existing.name = pending.name
-            existing.type = pending.type
-            existing.official_image = pending.official_image
-            existing.source = pending.source
+            if pending.changed_fields is None:
+                existing.name = pending.name
+                existing.type = pending.type
+                existing.official_image = pending.official_image
+                existing.source = pending.source
+            else:
+                for field in pending.changed_fields:
+                    setattr(existing, field, getattr(pending, field))
             existing.updated_at = datetime.utcnow()
         else:
             new_character = DBCharacter(
@@ -776,9 +917,13 @@ async def review_maker(
         existing = existing_result.scalar_one_or_none()
 
         if existing:
-            existing.name = pending.name
-            existing.avatar = pending.avatar
-            existing.social_media = pending.social_media
+            if pending.changed_fields is None:
+                existing.name = pending.name
+                existing.avatar = pending.avatar
+                existing.social_media = pending.social_media
+            else:
+                for field in pending.changed_fields:
+                    setattr(existing, field, getattr(pending, field))
             existing.updated_at = datetime.utcnow()
         else:
             new_maker = DBMaker(
