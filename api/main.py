@@ -1133,3 +1133,14 @@ async def update_maker(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update maker: {str(e)}")
+
+
+@app.post("/debug/clear_cache", dependencies=[Depends(get_current_admin)])
+async def clear_cache():
+    try:
+        delete_cache("all_characters")
+        delete_cache("all_kigers")
+        delete_cache("all_makers")
+        return {"message": "Cache cleared successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
