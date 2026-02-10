@@ -316,11 +316,12 @@ async def submit_character(
 
         db.add(pending_character)
         await db.commit()
+        await db.refresh(pending_character)
 
         return SubmitResponse(
             message=f"Character {character_data.name} submitted for review",
             status="pending",
-            id=character_data.originalName,
+            id=str(pending_character.id),
         )
     except Exception as e:
         await db.rollback()
@@ -368,11 +369,12 @@ async def submit_maker(maker_data: Maker, db: AsyncSession = Depends(get_db)):
 
         db.add(pending_maker)
         await db.commit()
+        await db.refresh(pending_maker)
 
         return SubmitResponse(
             message=f"Maker {maker_data.name} submitted for review",
             status="pending",
-            id=maker_data.originalName,
+            id=str(pending_maker.id),
         )
     except Exception as e:
         await db.rollback()
