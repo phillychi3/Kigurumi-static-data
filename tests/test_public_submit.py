@@ -1,5 +1,6 @@
 from api.database import Character as DBCharacter
 from api.database import Maker as DBMaker
+from api.database import Source as DBSource
 
 
 VALID_KIGER_PAYLOAD = {
@@ -95,12 +96,15 @@ async def test_submit_character_new(client):
 
 
 async def test_submit_character_existing_tracks_changes(client, db_session):
+    source = DBSource(title="Test Game", company="TestCo", release_year=2024)
+    db_session.add(source)
+    await db_session.flush()
     existing = DBCharacter(
         original_name="TestCharOriginal",
         name="Old Name",
         type="game",
         official_image="https://example.com/old.png",
-        source={"title": "Test Game", "company": "TestCo", "releaseYear": 2024},
+        source_id=source.id,
     )
     db_session.add(existing)
     await db_session.commit()

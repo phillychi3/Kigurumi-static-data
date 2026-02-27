@@ -12,6 +12,7 @@ from api.database import Character as DBCharacter
 from api.database import Kiger as DBKiger
 from api.database import KigerCharacter
 from api.database import Maker as DBMaker
+from api.database import Source as DBSource
 from api.database import async_session_maker, engine, init_db
 
 
@@ -91,12 +92,32 @@ async def migrate_characters_from_json():
                 skipped += 1
                 continue
 
+            source_dict = character_dict.get("source")
+            source_id = None
+            if source_dict:
+                title = source_dict.get("title", "")
+                company = source_dict.get("company", "")
+                release_year = source_dict.get("releaseYear", 0)
+                source_result = await session.execute(
+                    select(DBSource).where(
+                        DBSource.title == title, DBSource.company == company
+                    )
+                )
+                source_obj = source_result.scalar_one_or_none()
+                if not source_obj:
+                    source_obj = DBSource(
+                        title=title, company=company, release_year=release_year
+                    )
+                    session.add(source_obj)
+                    await session.flush()
+                source_id = source_obj.id
+
             character = DBCharacter(
                 original_name=original_name,
                 name=character_dict.get("name", original_name),
                 type=character_dict.get("type", ""),
                 official_image=character_dict.get("officialImage", ""),
-                source=character_dict.get("source"),
+                source_id=source_id,
             )
             session.add(character)
             count += 1

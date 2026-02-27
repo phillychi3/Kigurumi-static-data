@@ -6,6 +6,7 @@ from api.database import Character as DBCharacter
 from api.database import Kiger as DBKiger
 from api.database import Maker as DBMaker
 from api.database import PendingCharacter, PendingKiger, PendingMaker
+from api.database import Source as DBSource
 
 
 async def test_review_kiger_approve_new(admin_client, db_session):
@@ -147,6 +148,88 @@ async def test_review_character_approve_new(admin_client, db_session):
     char = result.scalar_one_or_none()
     assert char is not None
     assert char.name == "New Character"
+    assert char.source_id is not None
+
+    source_result = await db_session.execute(
+        select(DBSource).where(DBSource.id == char.source_id)
+    )
+    source = source_result.scalar_one_or_none()
+    assert source is not None
+    assert source.title == "Anime"
+    assert source.company == "Studio"
+    assert source.release_year == 2024
+
+
+async def test_review_character_approve_no_source_leaves_source_id_null(
+    admin_client, db_session
+):
+    pc = PendingCharacter(
+        original_name="NoSourceChar",
+        name="No Source",
+        type="other",
+        source=None,
+        status="pending",
+        submitted_at=datetime.utcnow(),
+    )
+    db_session.add(pc)
+    await db_session.commit()
+
+    response = await admin_client.post(
+        f"/admin/review/character/{pc.id}", json={"action": "approve"}
+    )
+    assert response.status_code == 200
+
+    char_result = await db_session.execute(
+        select(DBCharacter).where(DBCharacter.original_name == "NoSourceChar")
+    )
+    char = char_result.scalar_one_or_none()
+    assert char is not None
+    assert char.source_id is None
+
+
+async def test_review_character_approve_deduplicates_source(admin_client, db_session):
+    shared_source = {"title": "SharedGame", "company": "SharedCo", "releaseYear": 2022}
+    pc1 = PendingCharacter(
+        original_name="CharDedup1",
+        name="Char Dedup 1",
+        type="game",
+        source=shared_source,
+        status="pending",
+        submitted_at=datetime.utcnow(),
+    )
+    pc2 = PendingCharacter(
+        original_name="CharDedup2",
+        name="Char Dedup 2",
+        type="game",
+        source=shared_source,
+        status="pending",
+        submitted_at=datetime.utcnow(),
+    )
+    db_session.add_all([pc1, pc2])
+    await db_session.commit()
+
+    await admin_client.post(
+        f"/admin/review/character/{pc1.id}", json={"action": "approve"}
+    )
+    await admin_client.post(
+        f"/admin/review/character/{pc2.id}", json={"action": "approve"}
+    )
+
+    source_result = await db_session.execute(
+        select(DBSource).where(
+            DBSource.title == "SharedGame", DBSource.company == "SharedCo"
+        )
+    )
+    sources = source_result.scalars().all()
+    assert len(sources) == 1, "same source should be deduplicated to one record"
+
+    char_result = await db_session.execute(
+        select(DBCharacter).where(
+            DBCharacter.original_name.in_(["CharDedup1", "CharDedup2"])
+        )
+    )
+    chars = char_result.scalars().all()
+    assert all(c.source_id == sources[0].id for c in chars)
 
 
 async def test_review_character_approve_update_existing(admin_client, db_session):

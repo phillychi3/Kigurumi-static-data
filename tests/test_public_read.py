@@ -2,6 +2,7 @@ from api.database import Character as DBCharacter
 from api.database import Kiger as DBKiger
 from api.database import KigerCharacter
 from api.database import Maker as DBMaker
+from api.database import Source as DBSource
 
 
 async def test_root(client):
@@ -9,9 +10,6 @@ async def test_root(client):
     assert response.status_code == 200
     data = response.json()
     assert "v2.0" in data["message"]
-
-
-# --- Kigers ---
 
 
 async def test_get_kigers_empty(client):
@@ -70,14 +68,17 @@ async def test_get_kiger_with_characters(client, db_session):
         bio="",
         is_active=True,
     )
+    source = DBSource(title="Test Game", company="TestCo", release_year=2024)
+    db_session.add(kiger)
+    db_session.add(source)
+    await db_session.flush()
     char = DBCharacter(
         original_name="TestChar",
         name="Test Character",
         type="game",
         official_image="https://example.com/char.png",
-        source={"title": "Test Game", "company": "TestCo", "releaseYear": 2024},
+        source_id=source.id,
     )
-    db_session.add(kiger)
     db_session.add(char)
     await db_session.flush()
 
@@ -103,9 +104,6 @@ async def test_get_kiger_not_found(client):
     assert response.status_code == 404
 
 
-# --- Characters ---
-
-
 async def test_get_characters_empty(client):
     response = await client.get("/characters")
     assert response.status_code == 200
@@ -113,12 +111,15 @@ async def test_get_characters_empty(client):
 
 
 async def test_get_characters_with_data(client, db_session):
+    source = DBSource(title="Anime1", company="Studio1", release_year=2023)
+    db_session.add(source)
+    await db_session.flush()
     char = DBCharacter(
         original_name="Char1",
         name="Character One",
         type="anime",
         official_image="https://example.com/char1.png",
-        source={"title": "Anime1", "company": "Studio1", "releaseYear": 2023},
+        source_id=source.id,
     )
     db_session.add(char)
     await db_session.commit()
@@ -129,15 +130,21 @@ async def test_get_characters_with_data(client, db_session):
     assert len(data) == 1
     assert data[0]["name"] == "Character One"
     assert data[0]["originalName"] == "Char1"
+    assert data[0]["source"]["title"] == "Anime1"
+    assert data[0]["source"]["company"] == "Studio1"
+    assert data[0]["source"]["releaseYear"] == 2023
 
 
 async def test_get_character_by_id(client, db_session):
+    source = DBSource(title="VTuber Agency", company="Agency1", release_year=2022)
+    db_session.add(source)
+    await db_session.flush()
     char = DBCharacter(
         original_name="CharById",
         name="Char By Id",
         type="vtuber",
         official_image="https://example.com/vtuber.png",
-        source={"title": "VTuber Agency", "company": "Agency1", "releaseYear": 2022},
+        source_id=source.id,
     )
     db_session.add(char)
     await db_session.commit()
@@ -147,6 +154,9 @@ async def test_get_character_by_id(client, db_session):
     data = response.json()
     assert data["name"] == "Char By Id"
     assert data["type"] == "vtuber"
+    assert data["source"]["title"] == "VTuber Agency"
+    assert data["source"]["company"] == "Agency1"
+    assert data["source"]["releaseYear"] == 2022
 
 
 async def test_get_character_not_found(client):
@@ -154,7 +164,19 @@ async def test_get_character_not_found(client):
     assert response.status_code == 404
 
 
-# --- Makers ---
+async def test_get_character_source_null_when_no_source(client, db_session):
+    char = DBCharacter(
+        original_name="NullSourceChar",
+        name="Null Source",
+        type="other",
+        source_id=None,
+    )
+    db_session.add(char)
+    await db_session.commit()
+
+    response = await client.get(f"/character/{char.id}")
+    assert response.status_code == 200
+    assert response.json()["source"] is None
 
 
 async def test_get_makers_empty(client):

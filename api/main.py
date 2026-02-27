@@ -12,6 +12,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from .auth import authenticate_admin, create_access_token, get_current_admin
 from .cache import delete_cache, get_cache, invalidate_cache_by_prefix, set_cache
@@ -20,6 +21,7 @@ from .database import Kiger as DBKiger
 from .database import KigerCharacter
 from .database import Maker as DBMaker
 from .database import PendingCharacter, PendingKiger, PendingMaker, get_db, init_db
+from .database import Source as DBSource
 from .models import (
     Character,
     CrawlImageRequest,
@@ -41,6 +43,8 @@ from .schemas import (
     PendingKigerResponse,
     PendingMakerResponse,
     ReviewResponse,
+    SourceResponse,
+    SourceResponseAPI,
     SubmitResponse,
     TwitterTweetCrawlResponse,
     TwitterUserCrawlResponse,
@@ -72,6 +76,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def get_or_create_source(db: AsyncSession, source_dict: dict) -> DBSource:
+    title = source_dict.get("title", "")
+    company = source_dict.get("company", "")
+    release_year = source_dict.get("releaseYear", 0)
+
+    result = await db.execute(
+        select(DBSource).where(DBSource.title == title, DBSource.company == company)
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return existing
+
+    new_source = DBSource(title=title, company=company, release_year=release_year)
+    db.add(new_source)
+    await db.flush()
+    return new_source
 
 
 @app.get("/", response_model=MessageResponse)
@@ -277,9 +299,9 @@ async def submit_character(
 
         changed_fields = None
         existing_result = await db.execute(
-            select(DBCharacter).where(
-                DBCharacter.original_name == character_dict["originalName"]
-            )
+            select(DBCharacter)
+            .where(DBCharacter.original_name == character_dict["originalName"])
+            .options(selectinload(DBCharacter.source))
         )
         existing_official = existing_result.scalar_one_or_none()
         if existing_official:
@@ -298,7 +320,16 @@ async def submit_character(
                 if character_dict.get("source")
                 else None
             )
-            if submitted_source != existing_official.source:
+            existing_source_dict = (
+                {
+                    "title": existing_official.source.title,
+                    "company": existing_official.source.company,
+                    "releaseYear": existing_official.source.release_year,
+                }
+                if existing_official.source
+                else None
+            )
+            if submitted_source != existing_source_dict:
                 changed_fields.append("source")
 
         pending_character = PendingCharacter(
@@ -469,7 +500,9 @@ async def get_all_characters(db: AsyncSession = Depends(get_db)):
     if cached:
         return cached
 
-    result = await db.execute(select(DBCharacter))
+    result = await db.execute(
+        select(DBCharacter).options(selectinload(DBCharacter.source))
+    )
     characters = result.scalars().all()
 
     characters_list = [
@@ -479,7 +512,13 @@ async def get_all_characters(db: AsyncSession = Depends(get_db)):
             originalName=character.original_name,
             type=character.type,
             officialImage=character.official_image,
-            source=character.source,
+            source=SourceResponse(
+                title=character.source.title,
+                company=character.source.company,
+                releaseYear=character.source.release_year,
+            )
+            if character.source
+            else None,
         )
         for character in characters
     ]
@@ -498,7 +537,11 @@ async def get_character(character_id: int, db: AsyncSession = Depends(get_db)):
     if cached:
         return cached
 
-    result = await db.execute(select(DBCharacter).where(DBCharacter.id == character_id))
+    result = await db.execute(
+        select(DBCharacter)
+        .where(DBCharacter.id == character_id)
+        .options(selectinload(DBCharacter.source))
+    )
     character = result.scalar_one_or_none()
 
     if not character:
@@ -510,12 +553,45 @@ async def get_character(character_id: int, db: AsyncSession = Depends(get_db)):
         originalName=character.original_name,
         type=character.type,
         officialImage=character.official_image,
-        source=character.source,
+        source=SourceResponse(
+            title=character.source.title,
+            company=character.source.company,
+            releaseYear=character.source.release_year,
+        )
+        if character.source
+        else None,
     )
 
     set_cache(cache_key, character_response.model_dump())
 
     return character_response
+
+
+@app.get("/sources", response_model=list[SourceResponseAPI])
+async def get_all_sources(db: AsyncSession = Depends(get_db)):
+    """取得所有 Source 資料"""
+    cache_key = "all_sources"
+
+    cached = get_cache(cache_key)
+    if cached:
+        return cached
+
+    result = await db.execute(select(DBSource))
+    sources = result.scalars().all()
+
+    sources_list = [
+        SourceResponseAPI(
+            id=source.id,
+            title=source.title,
+            company=source.company,
+            releaseYear=source.release_year,
+        )
+        for source in sources
+    ]
+
+    set_cache(cache_key, [s.model_dump() for s in sources_list])
+
+    return sources_list
 
 
 @app.get("/makers", response_model=list[MakerResponse])
@@ -853,15 +929,22 @@ async def review_character(
         )
         existing = existing_result.scalar_one_or_none()
 
+        source_obj = None
+        if pending.source:
+            source_obj = await get_or_create_source(db, pending.source)
+
         if existing:
             if pending.changed_fields is None:
                 existing.name = pending.name
                 existing.type = pending.type
                 existing.official_image = pending.official_image
-                existing.source = pending.source
+                existing.source_id = source_obj.id if source_obj else None
             else:
                 for field in pending.changed_fields:
-                    setattr(existing, field, getattr(pending, field))
+                    if field == "source":
+                        existing.source_id = source_obj.id if source_obj else None
+                    else:
+                        setattr(existing, field, getattr(pending, field))
             existing.updated_at = datetime.utcnow()
         else:
             new_character = DBCharacter(
@@ -869,7 +952,7 @@ async def review_character(
                 name=pending.name,
                 type=pending.type,
                 official_image=pending.official_image,
-                source=pending.source,
+                source_id=source_obj.id if source_obj else None,
             )
             db.add(new_character)
         pending.status = "approved"
@@ -1067,13 +1150,19 @@ async def update_character(
         existing_character.original_name = character_dict["originalName"]
         existing_character.type = character_dict["type"]
         existing_character.official_image = character_dict.get("officialImage", "")
-        existing_character.source = character_dict.get("source")
+        source_dict = character_dict.get("source")
+        if source_dict:
+            source_obj = await get_or_create_source(db, source_dict)
+            existing_character.source_id = source_obj.id
+        else:
+            existing_character.source_id = None
         existing_character.updated_at = datetime.utcnow()
 
         invalidate_cache_by_prefix("character:")
         delete_cache("all_characters")
 
         await db.commit()
+        await db.refresh(existing_character, ["source"])
 
         return CharacterResponse(
             id=existing_character.id,
@@ -1081,7 +1170,13 @@ async def update_character(
             originalName=existing_character.original_name,
             type=existing_character.type,
             officialImage=existing_character.official_image,
-            source=existing_character.source,
+            source=SourceResponse(
+                title=existing_character.source.title,
+                company=existing_character.source.company,
+                releaseYear=existing_character.source.release_year,
+            )
+            if existing_character.source
+            else None,
         )
 
     except HTTPException:

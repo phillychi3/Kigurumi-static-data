@@ -54,6 +54,15 @@ class KigerDetailResponse(BaseModel):
     updatedAt: Optional[str] = None
 
 
+class SourceResponseAPI(BaseModel):
+    """來源資訊回應"""
+
+    id: int
+    title: str
+    company: str
+    releaseYear: int
+
+
 class SourceResponse(BaseModel):
     """來源資訊回應"""
 
@@ -70,7 +79,7 @@ class CharacterResponse(BaseModel):
     originalName: str
     type: str
     officialImage: Optional[str] = ""
-    source: Optional[dict] = None
+    source: Optional[SourceResponse] = None
 
 
 class MakerResponse(BaseModel):

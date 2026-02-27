@@ -3,10 +3,17 @@ from datetime import datetime
 from typing import AsyncGenerator, Optional
 
 from dotenv import load_dotenv
-from sqlalchemy import (JSON, Boolean, DateTime, ForeignKey, Integer, String,
-                        Text)
-from sqlalchemy.ext.asyncio import (AsyncSession, async_sessionmaker,
-                                    create_async_engine)
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 load_dotenv()
@@ -25,6 +32,25 @@ async_session_maker = async_sessionmaker(
 
 class Base(DeclarativeBase):
     pass
+
+
+class Source(Base):
+    __tablename__ = "sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    company: Mapped[str] = mapped_column(String(200), nullable=False)
+    release_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    characters: Mapped[list["Character"]] = relationship(back_populates="source")
+
+    __table_args__ = (
+        UniqueConstraint("title", "company", name="uq_source_title_company"),
+    )
 
 
 class Admin(Base):
@@ -64,12 +90,15 @@ class Character(Base):
     name: Mapped[str] = mapped_column(String(100))
     type: Mapped[str] = mapped_column(String(50))
     official_image: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    source: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    source_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("sources.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
+    source: Mapped[Optional["Source"]] = relationship(back_populates="characters")
     kiger_relations: Mapped[list["KigerCharacter"]] = relationship(
         back_populates="character", cascade="all, delete-orphan"
     )
@@ -94,9 +123,7 @@ class KigerCharacter(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     kiger_id: Mapped[str] = mapped_column(String(100), ForeignKey("kigers.id"))
-    character_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("characters.id")
-    )
+    character_id: Mapped[int] = mapped_column(Integer, ForeignKey("characters.id"))
     maker: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
