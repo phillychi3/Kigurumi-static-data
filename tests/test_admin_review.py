@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from api.database import Character as DBCharacter
 from api.database import Kiger as DBKiger
@@ -417,7 +418,7 @@ async def test_review_kiger_approve_character_via_character_data(
     assert source.title == "敗北女角太多了"
 
     kiger_result = await db_session.execute(
-        select(DBKiger).where(DBKiger.id == "kiger-char-data")
+        select(DBKiger).where(DBKiger.id == "kiger-char-data").options(selectinload(DBKiger.characters))
     )
     kiger = kiger_result.scalar_one_or_none()
     assert kiger is not None
@@ -463,7 +464,7 @@ async def test_review_kiger_approve_character_empty_id_creates_from_character_da
     assert char.name == "Empty Id Character"
 
     kiger_result = await db_session.execute(
-        select(DBKiger).where(DBKiger.id == "kiger-empty-char-id")
+        select(DBKiger).where(DBKiger.id == "kiger-empty-char-id").options(selectinload(DBKiger.characters))
     )
     kiger = kiger_result.scalar_one_or_none()
     assert kiger is not None

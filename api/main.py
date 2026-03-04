@@ -20,7 +20,7 @@ from .database import Character as DBCharacter
 from .database import Kiger as DBKiger
 from .database import KigerCharacter
 from .database import Maker as DBMaker
-from .database import PendingCharacter, PendingKiger, PendingMaker, get_db, init_db
+from .database import PendingCharacter, PendingKiger, PendingMaker, engine, get_db, init_db
 from .database import Source as DBSource
 from .models import (
     Character,
@@ -63,6 +63,7 @@ from crawler import (
 async def lifespan(app: FastAPI):
     await init_db()
     yield
+    await engine.dispose()
 
 
 app = FastAPI(title="Kigurumi Data API", version="2.0.0", lifespan=lifespan)
