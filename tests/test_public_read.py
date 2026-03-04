@@ -82,10 +82,14 @@ async def test_get_kiger_with_characters(client, db_session):
     db_session.add(char)
     await db_session.flush()
 
+    maker = DBMaker(original_name="TestMaker", name="TestMaker")
+    db_session.add(maker)
+    await db_session.flush()
+
     kc = KigerCharacter(
         kiger_id=kiger.id,
         character_id=char.id,
-        maker="TestMaker",
+        maker_id=maker.id,
         images=["https://example.com/img1.png"],
     )
     db_session.add(kc)
@@ -94,9 +98,10 @@ async def test_get_kiger_with_characters(client, db_session):
     response = await client.get("/kiger/kiger-with-chars")
     assert response.status_code == 200
     data = response.json()
+    print(data)
     assert len(data["Characters"]) == 1
     assert data["Characters"][0]["characterId"] == char.id
-    assert data["Characters"][0]["maker"] == "TestMaker"
+    assert data["Characters"][0]["makerName"] == "TestMaker"
 
 
 async def test_get_kiger_not_found(client):

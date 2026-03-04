@@ -35,7 +35,21 @@ class CharacterReferenceResponse(BaseModel):
     """角色引用回應（在 Kiger 詳情中使用）"""
 
     characterId: int
+    characterName: str
     makerId: Optional[int] = None
+    makerName: str
+    images: List[str]
+
+
+class KigerCharacterDataResponse(BaseModel):
+    """在提到角色資料的回應中使用"""
+
+    kigerid: str
+    kigername: str
+    characterId: int
+    characterName: str
+    makerId: Optional[int] = None
+    makerName: str = ""
     images: List[str] = []
 
 
@@ -71,7 +85,7 @@ class SourceResponse(BaseModel):
     releaseYear: int
 
 
-class CharacterResponse(BaseModel):
+class CharacterListItemResponse(BaseModel):
     """角色資料回應"""
 
     id: int
@@ -82,6 +96,28 @@ class CharacterResponse(BaseModel):
     source: Optional[SourceResponse] = None
 
 
+class CharacterResponse(BaseModel):
+    """角色資料回應"""
+
+    id: int
+    name: str
+    originalName: str
+    type: str
+    officialImage: Optional[str] = ""
+    source: Optional[SourceResponse] = None
+    kigers: List[KigerCharacterDataResponse]
+
+
+class MakerListItemResponse(BaseModel):
+    """Maker 資料回應"""
+
+    id: int
+    name: str
+    originalName: str
+    Avatar: Optional[str] = ""
+    socialMedia: Optional[dict] = None
+
+
 class MakerResponse(BaseModel):
     """Maker 資料回應"""
 
@@ -90,6 +126,7 @@ class MakerResponse(BaseModel):
     originalName: str
     Avatar: Optional[str] = ""
     socialMedia: Optional[dict] = None
+    kigers: List[KigerCharacterDataResponse]
 
 
 class TwitterUserCrawlResponse(BaseModel):
@@ -191,7 +228,7 @@ class KigerListResponse(BaseModel):
 class CharacterListResponse(BaseModel):
     """Character 列表回應"""
 
-    data: List[CharacterResponse] = Field(default_factory=list)
+    data: List[CharacterListItemResponse] = Field(default_factory=list)
     total: int = 0
 
 

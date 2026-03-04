@@ -2,9 +2,7 @@
 name = "kigurumi-static-data"
 version = "0.1.0"
 description = ""
-authors = [
-    {name = "phillychi3",email = "phillychi3@gmail.com"}
-]
+authors = [{ name = "phillychi3", email = "phillychi3@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = [
@@ -35,3 +33,10 @@ testpaths = ["tests"]
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+lint.select = ["ASYNC", "ARG", "B", "C", "C4", "E", "F", "Q", "W", "I"]
+
+lint.ignore = ["F401", "I001"]
+
+lint.unfixable = ["F401"]

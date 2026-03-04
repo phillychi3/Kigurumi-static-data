@@ -20,7 +20,14 @@ from .database import Character as DBCharacter
 from .database import Kiger as DBKiger
 from .database import KigerCharacter
 from .database import Maker as DBMaker
-from .database import PendingCharacter, PendingKiger, PendingMaker, engine, get_db, init_db
+from .database import (
+    PendingCharacter,
+    PendingKiger,
+    PendingMaker,
+    engine,
+    get_db,
+    init_db,
+)
 from .database import Source as DBSource
 from .models import (
     Character,
@@ -32,11 +39,14 @@ from .models import (
 )
 from .schemas import (
     CharacterReferenceResponse,
+    CharacterListItemResponse,
     CharacterResponse,
     ImageCharacterCrawlResponse,
+    KigerCharacterDataResponse,
     KigerDetailResponse,
     KigerListItemResponse,
     LoginResponse,
+    MakerListItemResponse,
     MakerResponse,
     MessageResponse,
     PendingCharacterResponse,
@@ -238,7 +248,9 @@ async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
                 if not original_name:
                     continue
                 existing_char = await db.execute(
-                    select(DBCharacter).where(DBCharacter.original_name == original_name)
+                    select(DBCharacter).where(
+                        DBCharacter.original_name == original_name
+                    )
                 )
                 if existing_char.scalar_one_or_none():
                     continue
@@ -494,14 +506,21 @@ async def get_kiger(kiger_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Kiger not found")
 
     characters_result = await db.execute(
-        select(KigerCharacter).where(KigerCharacter.kiger_id == kiger_id)
+        select(KigerCharacter)
+        .where(KigerCharacter.kiger_id == kiger_id)
+        .options(
+            selectinload(KigerCharacter.character),
+            selectinload(KigerCharacter.maker),
+        )
     )
     kiger_characters = characters_result.scalars().all()
 
     characters_list = [
         CharacterReferenceResponse(
             characterId=kc.character_id,
+            characterName=kc.character.name,
             makerId=kc.maker_id,
+            makerName=kc.maker.name if kc.maker else "",
             images=kc.images or [],
         )
         for kc in kiger_characters
@@ -525,7 +544,7 @@ async def get_kiger(kiger_id: str, db: AsyncSession = Depends(get_db)):
     return kiger_response
 
 
-@app.get("/characters", response_model=list[CharacterResponse])
+@app.get("/characters", response_model=list[CharacterListItemResponse])
 async def get_all_characters(db: AsyncSession = Depends(get_db)):
     """取得所有 Character 資料"""
     cache_key = "all_characters"
@@ -540,7 +559,7 @@ async def get_all_characters(db: AsyncSession = Depends(get_db)):
     characters = result.scalars().all()
 
     characters_list = [
-        CharacterResponse(
+        CharacterListItemResponse(
             id=character.id,
             name=character.name,
             originalName=character.original_name,
@@ -574,7 +593,9 @@ async def get_character(character_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(DBCharacter)
         .where(DBCharacter.id == character_id)
-        .options(selectinload(DBCharacter.source))
+        .options(
+            selectinload(DBCharacter.source), selectinload(DBCharacter.kiger_relations)
+        )
     )
     character = result.scalar_one_or_none()
 
@@ -594,6 +615,18 @@ async def get_character(character_id: int, db: AsyncSession = Depends(get_db)):
         )
         if character.source
         else None,
+        kigers=[
+            KigerCharacterDataResponse(
+                kigerid=character.kiger.id,
+                kigername=character.kiger.name,
+                characterId=character.character.id,
+                characterName=character.character.name,
+                makerId=character.maker.id if character.maker else None,
+                makerName=character.maker.name if character.maker else "",
+                images=character.images if character.images else [],
+            )
+            for character in character.kiger_relations
+        ],
     )
 
     set_cache(cache_key, character_response.model_dump())
@@ -628,7 +661,7 @@ async def get_all_sources(db: AsyncSession = Depends(get_db)):
     return sources_list
 
 
-@app.get("/makers", response_model=list[MakerResponse])
+@app.get("/makers", response_model=list[MakerListItemResponse])
 async def get_all_makers(db: AsyncSession = Depends(get_db)):
     """取得所有 Maker 資料"""
     cache_key = "all_makers"
@@ -641,7 +674,7 @@ async def get_all_makers(db: AsyncSession = Depends(get_db)):
     makers = result.scalars().all()
 
     makers_list = [
-        MakerResponse(
+        MakerListItemResponse(
             id=maker.id,
             name=maker.name,
             originalName=maker.original_name,
@@ -665,7 +698,11 @@ async def get_maker(maker_id: int, db: AsyncSession = Depends(get_db)):
     if cached:
         return cached
 
-    result = await db.execute(select(DBMaker).where(DBMaker.id == maker_id))
+    result = await db.execute(
+        select(DBMaker)
+        .where(DBMaker.id == maker_id)
+        .options(selectinload(DBMaker.kiger_characters))
+    )
     maker = result.scalar_one_or_none()
 
     if not maker:
@@ -677,6 +714,18 @@ async def get_maker(maker_id: int, db: AsyncSession = Depends(get_db)):
         originalName=maker.original_name,
         Avatar=maker.avatar,
         socialMedia=maker.social_media,
+        kigers=[
+            KigerCharacterDataResponse(
+                kigerid=kc.kiger.id,
+                kigername=kc.kiger.name,
+                characterId=kc.character.id,
+                characterName=kc.character.name,
+                makerId=kc.maker.id if kc.maker else None,
+                makerName=kc.maker.name if kc.maker else "",
+                images=kc.images if kc.images else [],
+            )
+            for kc in maker.kiger_characters
+        ],
     )
 
     set_cache(cache_key, maker_response.model_dump())
@@ -1130,9 +1179,10 @@ async def update_kiger(
                 delete(KigerCharacter).where(KigerCharacter.kiger_id == kiger_id)
             )
             for char_ref in kiger_dict["Characters"]:
+                char_id = char_ref.get("characterId")
                 kiger_char = KigerCharacter(
                     kiger_id=kiger_id,
-                    character_id=char_ref.get("characterId"),
+                    character_id=int(char_id) if char_id else None,
                     maker_id=char_ref.get("makerId"),
                     images=char_ref.get("images", []),
                 )
@@ -1144,14 +1194,21 @@ async def update_kiger(
         await db.commit()
 
         characters_result = await db.execute(
-            select(KigerCharacter).where(KigerCharacter.kiger_id == kiger_id)
+            select(KigerCharacter)
+            .where(KigerCharacter.kiger_id == kiger_id)
+            .options(
+                selectinload(KigerCharacter.character),
+                selectinload(KigerCharacter.maker),
+            )
         )
         kiger_characters = characters_result.scalars().all()
 
         characters_list = [
             CharacterReferenceResponse(
                 characterId=kc.character_id,
+                characterName=kc.character.name,
                 makerId=kc.maker_id,
+                makerName=kc.maker.name if kc.maker else "",
                 images=kc.images or [],
             )
             for kc in kiger_characters
@@ -1183,7 +1240,7 @@ async def update_kiger(
 
 @app.put(
     "/admin/character/{character_id}",
-    response_model=CharacterResponse,
+    response_model=CharacterListItemResponse,
     dependencies=[Depends(get_current_admin)],
 )
 async def update_character(
@@ -1219,7 +1276,7 @@ async def update_character(
         await db.commit()
         await db.refresh(existing_character, ["source"])
 
-        return CharacterResponse(
+        return CharacterListItemResponse(
             id=existing_character.id,
             name=existing_character.name,
             originalName=existing_character.original_name,
@@ -1245,7 +1302,7 @@ async def update_character(
 
 @app.put(
     "/admin/maker/{maker_id}",
-    response_model=MakerResponse,
+    response_model=MakerListItemResponse,
     dependencies=[Depends(get_current_admin)],
 )
 async def update_maker(
@@ -1272,7 +1329,7 @@ async def update_maker(
 
         await db.commit()
 
-        return MakerResponse(
+        return MakerListItemResponse(
             id=existing_maker.id,
             name=existing_maker.name,
             originalName=existing_maker.original_name,
