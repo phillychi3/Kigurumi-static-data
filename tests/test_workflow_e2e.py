@@ -106,13 +106,21 @@ async def test_full_kiger_lifecycle_with_characters(admin_client):
     assert kiger_submit.status_code == 200
     kiger_pending_id = kiger_submit.json()["id"]
 
-    # 3. Approve the kiger
+    # 3. Verify pending endpoint returns Characters as list of dicts
+    pending = await admin_client.get("/admin/pending/kigers")
+    assert pending.status_code == 200
+    pending_data = pending.json()
+    assert len(pending_data) == 1
+    assert isinstance(pending_data[0]["Characters"][0], dict)
+    assert pending_data[0]["Characters"][0]["characterId"] == str(char_id)
+
+    # 4. Approve the kiger
     review = await admin_client.post(
         f"/admin/review/kiger/{kiger_pending_id}", json={"action": "approve"}
     )
     assert review.status_code == 200
 
-    # 4. Verify kiger is visible with character reference
+    # 5. Verify kiger is visible with character reference
     kigers = await admin_client.get("/kigers")
     assert len(kigers.json()) == 1
 

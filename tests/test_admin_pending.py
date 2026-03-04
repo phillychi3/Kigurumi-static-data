@@ -18,7 +18,7 @@ async def test_get_pending_kigers_with_data(admin_client, db_session):
         position="cosplayer",
         is_active=True,
         social_media={"twitter": "test"},
-        characters=[],
+        characters=[{"maker": "7", "images": ["https://example.com/img.png"], "characterData": None}],
         status="pending",
         submitted_at=datetime.utcnow(),
     )
@@ -31,6 +31,7 @@ async def test_get_pending_kigers_with_data(admin_client, db_session):
     assert len(data) == 1
     assert data[0]["id"] == "pending-kiger-1"
     assert data[0]["status"] == "pending"
+    assert isinstance(data[0]["Characters"][0], dict)
 
 
 async def test_get_pending_kigers_excludes_non_pending(admin_client, db_session):

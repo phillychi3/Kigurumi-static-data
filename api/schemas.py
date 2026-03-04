@@ -141,7 +141,7 @@ class PendingKigerResponse(BaseModel):
     position: Optional[str] = ""
     isActive: bool = True
     socialMedia: Optional[dict] = None
-    Characters: List[str] = []
+    Characters: List[dict] = []
     changedFields: Optional[List[str]] = None
     status: str
     submitted_at: Optional[str] = None
