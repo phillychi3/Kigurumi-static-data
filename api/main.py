@@ -501,7 +501,7 @@ async def get_kiger(kiger_id: str, db: AsyncSession = Depends(get_db)):
     characters_list = [
         CharacterReferenceResponse(
             characterId=kc.character_id,
-            maker=kc.maker,
+            makerId=kc.maker_id,
             images=kc.images or [],
         )
         for kc in kiger_characters
@@ -932,7 +932,7 @@ async def review_kiger(
                 kiger_char = KigerCharacter(
                     kiger_id=target_id,
                     character_id=db_char.id,
-                    maker=char_ref.get("maker"),
+                    maker_id=char_ref.get("makerId"),
                     images=char_ref.get("images", []),
                 )
                 db.add(kiger_char)
@@ -1133,7 +1133,7 @@ async def update_kiger(
                 kiger_char = KigerCharacter(
                     kiger_id=kiger_id,
                     character_id=char_ref.get("characterId"),
-                    maker=char_ref.get("maker"),
+                    maker_id=char_ref.get("makerId"),
                     images=char_ref.get("images", []),
                 )
                 db.add(kiger_char)
@@ -1151,7 +1151,7 @@ async def update_kiger(
         characters_list = [
             CharacterReferenceResponse(
                 characterId=kc.character_id,
-                maker=kc.maker,
+                makerId=kc.maker_id,
                 images=kc.images or [],
             )
             for kc in kiger_characters

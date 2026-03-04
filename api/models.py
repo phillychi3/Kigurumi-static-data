@@ -31,7 +31,7 @@ class Character(BaseModel):
 
 class CharacterReference(BaseModel):
     characterId: str
-    maker: Optional[str] = None
+    makerId: Optional[int] = None
     images: List[str]
     characterData: Optional["Character"] = None
 

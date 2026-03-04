@@ -117,6 +117,10 @@ class Maker(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
+    kiger_characters: Mapped[list["KigerCharacter"]] = relationship(
+        back_populates="maker"
+    )
+
 
 class KigerCharacter(Base):
     __tablename__ = "kiger_characters"
@@ -124,11 +128,14 @@ class KigerCharacter(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     kiger_id: Mapped[str] = mapped_column(String(100), ForeignKey("kigers.id"))
     character_id: Mapped[int] = mapped_column(Integer, ForeignKey("characters.id"))
-    maker: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    maker_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("makers.id"), nullable=True
+    )
     images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
     kiger: Mapped["Kiger"] = relationship(back_populates="characters")
     character: Mapped["Character"] = relationship(back_populates="kiger_relations")
+    maker: Mapped[Optional["Maker"]] = relationship(back_populates="kiger_characters")
 
 
 class PendingKiger(Base):

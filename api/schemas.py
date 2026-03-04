@@ -35,7 +35,7 @@ class CharacterReferenceResponse(BaseModel):
     """角色引用回應（在 Kiger 詳情中使用）"""
 
     characterId: int
-    maker: Optional[str] = None
+    makerId: Optional[int] = None
     images: List[str] = []
 
 
