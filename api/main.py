@@ -227,7 +227,41 @@ async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
         auto_created_character_ids = []
         for char_ref in kiger_dict.get("Characters", []):
             char_id = char_ref.get("characterId")
+            char_data = char_ref.get("characterData")
+
             if not char_id:
+                # No characterId — create PendingCharacter from characterData
+                if not char_data:
+                    continue
+                original_name = char_data.get("originalName", "")
+                if not original_name:
+                    continue
+                existing_char = await db.execute(
+                    select(DBCharacter).where(DBCharacter.original_name == original_name)
+                )
+                if existing_char.scalar_one_or_none():
+                    continue
+                existing_pending = await db.execute(
+                    select(PendingCharacter).where(
+                        PendingCharacter.original_name == original_name,
+                        PendingCharacter.status == "pending",
+                    )
+                )
+                if existing_pending.scalar_one_or_none():
+                    continue
+                pending_char = PendingCharacter(
+                    original_name=original_name,
+                    name=char_data.get("name", ""),
+                    type=char_data.get("type", ""),
+                    official_image=char_data.get("officialImage", ""),
+                    source=char_data.get("source"),
+                    changed_fields=None,
+                    status="pending",
+                    submitted_at=datetime.utcnow(),
+                )
+                db.add(pending_char)
+                await db.flush()
+                auto_created_character_ids.append(pending_char.id)
                 continue
 
             existing_char = await db.execute(
@@ -245,7 +279,6 @@ async def submit_kiger(kiger_data: Kiger, db: AsyncSession = Depends(get_db)):
             if existing_pending.scalar_one_or_none():
                 continue
 
-            char_data = char_ref.get("characterData")
             if char_data:
                 pending_char = PendingCharacter(
                     original_name=char_data.get("originalName", str(char_id)),
@@ -835,12 +868,16 @@ async def review_kiger(
                     )
                 )
                 if not existing_char.scalar_one_or_none():
+                    source_id = None
+                    if pc.source:
+                        source = await get_or_create_source(db, pc.source)
+                        source_id = source.id
                     new_char = DBCharacter(
                         original_name=pc.original_name,
                         name=pc.name,
                         type=pc.type,
                         official_image=pc.official_image,
-                        source=pc.source,
+                        source_id=source_id,
                     )
                     db.add(new_char)
                 pc.status = "approved"
@@ -858,20 +895,37 @@ async def review_kiger(
             )
             for char_ref in pending.characters:
                 char_id = char_ref.get("characterId")
-                char_result = await db.execute(
-                    select(DBCharacter).where(DBCharacter.id == int(char_id))
-                )
-                db_char = char_result.scalar_one_or_none()
-                if not db_char:
-                    char_data = char_ref.get("characterData", {})
-                    if char_data:
-                        char_result2 = await db.execute(
+                char_data = char_ref.get("characterData", {})
+                db_char = None
+                if char_id:
+                    char_result = await db.execute(
+                        select(DBCharacter).where(DBCharacter.id == int(char_id))
+                    )
+                    db_char = char_result.scalar_one_or_none()
+                if not db_char and char_data:
+                    original_name = char_data.get("originalName", "")
+                    if original_name:
+                        existing_result = await db.execute(
                             select(DBCharacter).where(
-                                DBCharacter.original_name
-                                == char_data.get("originalName", str(char_id))
+                                DBCharacter.original_name == original_name
                             )
                         )
-                        db_char = char_result2.scalar_one_or_none()
+                        db_char = existing_result.scalar_one_or_none()
+                    if not db_char:
+                        source_id = None
+                        source_dict = char_data.get("source")
+                        if source_dict:
+                            source = await get_or_create_source(db, source_dict)
+                            source_id = source.id
+                        db_char = DBCharacter(
+                            original_name=original_name,
+                            name=char_data.get("name", original_name),
+                            type=char_data.get("type", "other"),
+                            official_image=char_data.get("officialImage"),
+                            source_id=source_id,
+                        )
+                        db.add(db_char)
+                        await db.flush()
                 if not db_char:
                     continue
                 kiger_char = KigerCharacter(

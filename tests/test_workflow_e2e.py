@@ -1,6 +1,5 @@
 """Full end-to-end workflow tests: submit -> pending -> review -> visible."""
 
-
 CHAR_PAYLOAD = {
     "name": "Workflow Character",
     "originalName": "WorkflowCharOriginal",
@@ -132,6 +131,61 @@ async def test_full_kiger_lifecycle_with_characters(admin_client):
     assert data["Characters"][0]["characterId"] == char_id
 
 
+async def test_full_kiger_lifecycle_with_no_character_id(admin_client):
+    kiger_payload = {
+        **KIGER_PAYLOAD,
+        "Characters": [
+            {
+                "characterId": "",
+                "maker": "TestMaker",
+                "images": ["https://example.com/img.png"],
+                "characterData": {
+                    "id": None,
+                    "name": "八奈見杏菜",
+                    "type": "anime",
+                    "source": {
+                        "title": "敗北女角太多了",
+                        "company": "小學館",
+                        "releaseYear": 2021,
+                    },
+                    "createdAt": None,
+                    "updatedAt": None,
+                    "originalName": "Yanami Anna",
+                    "officialImage": "https://truth.bahamut.com.tw/s01/202409/forum/76136/df6ea0ae0af52ca9850b88abf878a2e1.JPG",
+                },
+            }
+        ],
+    }
+    kiger_submit = await admin_client.post("/kiger", json=kiger_payload)
+    assert kiger_submit.status_code == 200
+    kiger_pending_id = kiger_submit.json()["id"]
+
+    # 3. Verify pending endpoint returns Characters as list of dicts
+    pending = await admin_client.get("/admin/pending/kigers")
+    assert pending.status_code == 200
+    pending_data = pending.json()
+    assert len(pending_data) == 1
+    assert isinstance(pending_data[0]["Characters"][0], dict)
+    assert pending_data[0]["Characters"][0]["characterData"]["name"] == "八奈見杏菜"
+
+    # 4. Approve the kiger
+    review = await admin_client.post(
+        f"/admin/review/kiger/{kiger_pending_id}", json={"action": "approve"}
+    )
+    assert review.status_code == 200
+
+    # 5. Verify kiger is visible with character reference
+    kigers = await admin_client.get("/kigers")
+    assert len(kigers.json()) == 1
+
+    detail = await admin_client.get(f"/kiger/{kiger_pending_id}")
+    assert detail.status_code == 200
+    data = detail.json()
+    assert data["name"] == "Workflow Kiger"
+    assert len(data["Characters"]) == 1
+    assert data["Characters"][0]["characterId"] is not None
+
+
 async def test_submit_and_reject(admin_client):
     # Submit
     submit = await admin_client.post("/character", json=CHAR_PAYLOAD)
@@ -154,7 +208,9 @@ async def test_two_sequential_kiger_edits(admin_client):
     # 1. Create and approve initial kiger
     initial = await admin_client.post("/kiger", json=KIGER_PAYLOAD)
     kiger_id = initial.json()["id"]
-    await admin_client.post(f"/admin/review/kiger/{kiger_id}", json={"action": "approve"})
+    await admin_client.post(
+        f"/admin/review/kiger/{kiger_id}", json={"action": "approve"}
+    )
 
     # 2. Edit 1: change bio only
     edit1 = await admin_client.post(
@@ -200,7 +256,9 @@ async def test_two_simultaneous_pending_kiger_edits_different_fields(admin_clien
     # 1. Create and approve initial kiger
     initial = await admin_client.post("/kiger", json=KIGER_PAYLOAD)
     kiger_id = initial.json()["id"]
-    await admin_client.post(f"/admin/review/kiger/{kiger_id}", json={"action": "approve"})
+    await admin_client.post(
+        f"/admin/review/kiger/{kiger_id}", json={"action": "approve"}
+    )
 
     # 2. Submit two edits simultaneously (neither approved yet)
     edit1 = await admin_client.post(
@@ -237,7 +295,9 @@ async def test_two_pending_edits_same_field_last_approval_wins(admin_client):
     # 1. Create and approve initial kiger
     initial = await admin_client.post("/kiger", json=KIGER_PAYLOAD)
     kiger_id = initial.json()["id"]
-    await admin_client.post(f"/admin/review/kiger/{kiger_id}", json={"action": "approve"})
+    await admin_client.post(
+        f"/admin/review/kiger/{kiger_id}", json={"action": "approve"}
+    )
 
     # 2. Two edits both targeting 'name'
     edit1 = await admin_client.post(
@@ -271,7 +331,9 @@ async def test_reject_one_pending_edit_approve_other(admin_client):
     # 1. Create and approve initial kiger
     initial = await admin_client.post("/kiger", json=KIGER_PAYLOAD)
     kiger_id = initial.json()["id"]
-    await admin_client.post(f"/admin/review/kiger/{kiger_id}", json={"action": "approve"})
+    await admin_client.post(
+        f"/admin/review/kiger/{kiger_id}", json={"action": "approve"}
+    )
 
     # 2. Submit two simultaneous edits
     edit1 = await admin_client.post(

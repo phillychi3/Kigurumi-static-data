@@ -367,3 +367,105 @@ async def test_review_maker_not_found(admin_client):
         "/admin/review/maker/99999", json={"action": "approve"}
     )
     assert response.status_code == 404
+
+
+async def test_review_kiger_approve_character_via_character_data(
+    admin_client, db_session
+):
+    """When characterId is absent, create a new Character from characterData."""
+    pk = PendingKiger(
+        id="kiger-char-data",
+        name="Kiger With Char Data",
+        bio="",
+        is_active=True,
+        characters=[
+            {
+                "characterData": {
+                    "originalName": "Yanami Anna",
+                    "name": "八奈見杏菜",
+                    "type": "anime",
+                    "officialImage": "https://example.com/char.jpg",
+                    "source": {"title": "敗北女角太多了", "company": "小學館", "releaseYear": 2021},
+                },
+            }
+        ],
+        status="pending",
+        submitted_at=datetime.utcnow(),
+    )
+    db_session.add(pk)
+    await db_session.commit()
+
+    response = await admin_client.post(
+        "/admin/review/kiger/kiger-char-data", json={"action": "approve"}
+    )
+    assert response.status_code == 200
+
+    char_result = await db_session.execute(
+        select(DBCharacter).where(DBCharacter.original_name == "Yanami Anna")
+    )
+    char = char_result.scalar_one_or_none()
+    assert char is not None
+    assert char.name == "八奈見杏菜"
+    assert char.type == "anime"
+    assert char.source_id is not None
+
+    source_result = await db_session.execute(
+        select(DBSource).where(DBSource.id == char.source_id)
+    )
+    source = source_result.scalar_one_or_none()
+    assert source is not None
+    assert source.title == "敗北女角太多了"
+
+    kiger_result = await db_session.execute(
+        select(DBKiger).where(DBKiger.id == "kiger-char-data")
+    )
+    kiger = kiger_result.scalar_one_or_none()
+    assert kiger is not None
+    assert len(kiger.characters) == 1
+    assert kiger.characters[0].character_id == char.id
+
+
+async def test_review_kiger_approve_character_empty_id_creates_from_character_data(
+    admin_client, db_session
+):
+    """When characterId is empty string, create a new Character from characterData."""
+    pk = PendingKiger(
+        id="kiger-empty-char-id",
+        name="Kiger Empty CharId",
+        bio="",
+        is_active=True,
+        characters=[
+            {
+                "characterId": "",
+                "characterData": {
+                    "originalName": "EmptyIdChar",
+                    "name": "Empty Id Character",
+                    "type": "game",
+                },
+            }
+        ],
+        status="pending",
+        submitted_at=datetime.utcnow(),
+    )
+    db_session.add(pk)
+    await db_session.commit()
+
+    response = await admin_client.post(
+        "/admin/review/kiger/kiger-empty-char-id", json={"action": "approve"}
+    )
+    assert response.status_code == 200
+
+    char_result = await db_session.execute(
+        select(DBCharacter).where(DBCharacter.original_name == "EmptyIdChar")
+    )
+    char = char_result.scalar_one_or_none()
+    assert char is not None
+    assert char.name == "Empty Id Character"
+
+    kiger_result = await db_session.execute(
+        select(DBKiger).where(DBKiger.id == "kiger-empty-char-id")
+    )
+    kiger = kiger_result.scalar_one_or_none()
+    assert kiger is not None
+    assert len(kiger.characters) == 1
+    assert kiger.characters[0].character_id == char.id

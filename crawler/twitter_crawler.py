@@ -183,7 +183,7 @@ async def parse_character_image(image_url: str) -> Optional[Dict[str, Any]]:
         content_parts = [prompt, image_url]
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash-exp",
+            model="gemini-2.5-flash-lite",
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.1,
