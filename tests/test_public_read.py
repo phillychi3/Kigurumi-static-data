@@ -162,6 +162,50 @@ async def test_get_character_by_id(client, db_session):
     assert data["source"]["title"] == "VTuber Agency"
     assert data["source"]["company"] == "Agency1"
     assert data["source"]["releaseYear"] == 2022
+    assert data["kigers"] == []
+
+
+async def test_get_character_with_kigers(client, db_session):
+    source = DBSource(title="Game X", company="GameCo", release_year=2021)
+    db_session.add(source)
+    await db_session.flush()
+    char = DBCharacter(
+        original_name="CharWithKiger",
+        name="Char With Kiger",
+        type="game",
+        official_image="https://example.com/char.png",
+        source_id=source.id,
+    )
+    maker = DBMaker(original_name="MakerForChar", name="Maker For Char", avatar="")
+    kiger = DBKiger(
+        id="kiger-char-test",
+        name="Kiger For Char",
+        bio="bio",
+        is_active=True,
+    )
+    db_session.add_all([char, maker, kiger])
+    await db_session.flush()
+
+    kc = KigerCharacter(
+        kiger_id=kiger.id,
+        character_id=char.id,
+        maker_id=maker.id,
+        images=["https://example.com/kc.png"],
+    )
+    db_session.add(kc)
+    await db_session.commit()
+
+    response = await client.get(f"/character/{char.id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["kigers"]) == 1
+    assert data["kigers"][0]["kigerid"] == "kiger-char-test"
+    assert data["kigers"][0]["kigername"] == "Kiger For Char"
+    assert data["kigers"][0]["characterId"] == char.id
+    assert data["kigers"][0]["characterName"] == "Char With Kiger"
+    assert data["kigers"][0]["makerId"] == maker.id
+    assert data["kigers"][0]["makerName"] == "Maker For Char"
+    assert data["kigers"][0]["images"] == ["https://example.com/kc.png"]
 
 
 async def test_get_character_not_found(client):
@@ -222,6 +266,53 @@ async def test_get_maker_by_id(client, db_session):
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "Maker By Id"
+    assert data["kigers"] == []
+
+
+async def test_get_maker_with_kigers(client, db_session):
+    source = DBSource(title="Game Y", company="GameCoY", release_year=2020)
+    db_session.add(source)
+    await db_session.flush()
+    char = DBCharacter(
+        original_name="CharForMaker",
+        name="Char For Maker",
+        type="game",
+        source_id=source.id,
+    )
+    maker = DBMaker(
+        original_name="MakerWithKiger",
+        name="Maker With Kiger",
+        avatar="https://example.com/maker.png",
+    )
+    kiger = DBKiger(
+        id="kiger-maker-test",
+        name="Kiger For Maker",
+        bio="bio",
+        is_active=True,
+    )
+    db_session.add_all([char, maker, kiger])
+    await db_session.flush()
+
+    kc = KigerCharacter(
+        kiger_id=kiger.id,
+        character_id=char.id,
+        maker_id=maker.id,
+        images=["https://example.com/mkc.png"],
+    )
+    db_session.add(kc)
+    await db_session.commit()
+
+    response = await client.get(f"/maker/{maker.id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["kigers"]) == 1
+    assert data["kigers"][0]["kigerid"] == "kiger-maker-test"
+    assert data["kigers"][0]["kigername"] == "Kiger For Maker"
+    assert data["kigers"][0]["characterId"] == char.id
+    assert data["kigers"][0]["characterName"] == "Char For Maker"
+    assert data["kigers"][0]["makerId"] == maker.id
+    assert data["kigers"][0]["makerName"] == "Maker With Kiger"
+    assert data["kigers"][0]["images"] == ["https://example.com/mkc.png"]
 
 
 async def test_get_maker_not_found(client):

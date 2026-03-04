@@ -594,7 +594,10 @@ async def get_character(character_id: int, db: AsyncSession = Depends(get_db)):
         select(DBCharacter)
         .where(DBCharacter.id == character_id)
         .options(
-            selectinload(DBCharacter.source), selectinload(DBCharacter.kiger_relations)
+            selectinload(DBCharacter.source),
+            selectinload(DBCharacter.kiger_relations).selectinload(KigerCharacter.kiger),
+            selectinload(DBCharacter.kiger_relations).selectinload(KigerCharacter.character),
+            selectinload(DBCharacter.kiger_relations).selectinload(KigerCharacter.maker),
         )
     )
     character = result.scalar_one_or_none()
@@ -701,7 +704,11 @@ async def get_maker(maker_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(DBMaker)
         .where(DBMaker.id == maker_id)
-        .options(selectinload(DBMaker.kiger_characters))
+        .options(
+            selectinload(DBMaker.kiger_characters).selectinload(KigerCharacter.kiger),
+            selectinload(DBMaker.kiger_characters).selectinload(KigerCharacter.character),
+            selectinload(DBMaker.kiger_characters).selectinload(KigerCharacter.maker),
+        )
     )
     maker = result.scalar_one_or_none()
 
