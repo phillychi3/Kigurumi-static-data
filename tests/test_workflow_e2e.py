@@ -95,7 +95,7 @@ async def test_full_kiger_lifecycle_with_characters(admin_client):
         **KIGER_PAYLOAD,
         "Characters": [
             {
-                "characterId": str(char_id),
+                "characterId": char_id,
                 "maker": "TestMaker",
                 "images": ["https://example.com/img.png"],
             }
@@ -111,7 +111,7 @@ async def test_full_kiger_lifecycle_with_characters(admin_client):
     pending_data = pending.json()
     assert len(pending_data) == 1
     assert isinstance(pending_data[0]["Characters"][0], dict)
-    assert pending_data[0]["Characters"][0]["characterId"] == str(char_id)
+    assert pending_data[0]["Characters"][0]["characterId"] == char_id
 
     # 4. Approve the kiger
     review = await admin_client.post(
@@ -136,7 +136,7 @@ async def test_full_kiger_lifecycle_with_no_character_id(admin_client):
         **KIGER_PAYLOAD,
         "Characters": [
             {
-                "characterId": "",
+                "characterId": None,
                 "maker": "TestMaker",
                 "images": ["https://example.com/img.png"],
                 "characterData": {
