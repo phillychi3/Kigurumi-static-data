@@ -79,9 +79,15 @@ class CrawlTwitterTweetRequest(BaseModel):
 
 class CrawlImageRequest(BaseModel):
     """從圖片 URL 識別角色的請求"""
+
     image_url: str = Field(..., description="要識別的圖片 URL")
 
 
 class UpdateDataRequest(BaseModel):
     data_type: str = Field(..., description="kiger, character, or maker")
     data: dict
+
+
+class ReqRange(BaseModel):
+    start: Optional[int] = Field(None, description="起始索引")
+    end: Optional[int] = Field(None, description="結束索引")

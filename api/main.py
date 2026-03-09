@@ -36,6 +36,7 @@ from .models import (
     CrawlTwitterUserRequest,
     Kiger,
     Maker,
+    ReqRange,
 )
 from .schemas import (
     CharacterReferenceResponse,
@@ -459,13 +460,14 @@ async def submit_maker(maker_data: Maker, db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/kigers", response_model=list[KigerListItemResponse])
-async def get_all_kigers(db: AsyncSession = Depends(get_db)):
+async def get_all_kigers(Req: ReqRange, db: AsyncSession = Depends(get_db)):
     """取得所有 Kiger 資料"""
     cache_key = "all_kigers"
 
+    has_range = Req.start is not None or Req.end is not None
     cached = get_cache(cache_key)
     if cached:
-        return cached
+        return cached[Req.start : Req.end] if has_range else cached
 
     result = await db.execute(select(DBKiger))
     kigers = result.scalars().all()
@@ -487,7 +489,7 @@ async def get_all_kigers(db: AsyncSession = Depends(get_db)):
 
     set_cache(cache_key, [k.model_dump() for k in kigers_list])
 
-    return kigers_list
+    return kigers_list[Req.start : Req.end] if has_range else kigers_list
 
 
 @app.get("/kiger/{kiger_id}", response_model=KigerDetailResponse)
@@ -545,13 +547,14 @@ async def get_kiger(kiger_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/characters", response_model=list[CharacterListItemResponse])
-async def get_all_characters(db: AsyncSession = Depends(get_db)):
+async def get_all_characters(Req: ReqRange, db: AsyncSession = Depends(get_db)):
     """取得所有 Character 資料"""
     cache_key = "all_characters"
 
+    has_range = Req.start is not None or Req.end is not None
     cached = get_cache(cache_key)
     if cached:
-        return cached
+        return cached[Req.start : Req.end] if has_range else cached
 
     result = await db.execute(
         select(DBCharacter).options(selectinload(DBCharacter.source))
@@ -578,7 +581,7 @@ async def get_all_characters(db: AsyncSession = Depends(get_db)):
 
     set_cache(cache_key, [c.model_dump() for c in characters_list])
 
-    return characters_list
+    return characters_list[Req.start : Req.end] if has_range else characters_list
 
 
 @app.get("/character/{character_id}", response_model=CharacterResponse)
@@ -595,9 +598,15 @@ async def get_character(character_id: int, db: AsyncSession = Depends(get_db)):
         .where(DBCharacter.id == character_id)
         .options(
             selectinload(DBCharacter.source),
-            selectinload(DBCharacter.kiger_relations).selectinload(KigerCharacter.kiger),
-            selectinload(DBCharacter.kiger_relations).selectinload(KigerCharacter.character),
-            selectinload(DBCharacter.kiger_relations).selectinload(KigerCharacter.maker),
+            selectinload(DBCharacter.kiger_relations).selectinload(
+                KigerCharacter.kiger
+            ),
+            selectinload(DBCharacter.kiger_relations).selectinload(
+                KigerCharacter.character
+            ),
+            selectinload(DBCharacter.kiger_relations).selectinload(
+                KigerCharacter.maker
+            ),
         )
     )
     character = result.scalar_one_or_none()
@@ -665,13 +674,14 @@ async def get_all_sources(db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/makers", response_model=list[MakerListItemResponse])
-async def get_all_makers(db: AsyncSession = Depends(get_db)):
+async def get_all_makers(Req: ReqRange, db: AsyncSession = Depends(get_db)):
     """取得所有 Maker 資料"""
     cache_key = "all_makers"
 
+    has_range = Req.start is not None or Req.end is not None
     cached = get_cache(cache_key)
     if cached:
-        return cached
+        return cached[Req.start : Req.end] if has_range else cached
 
     result = await db.execute(select(DBMaker))
     makers = result.scalars().all()
@@ -689,7 +699,7 @@ async def get_all_makers(db: AsyncSession = Depends(get_db)):
 
     set_cache(cache_key, [m.model_dump() for m in makers_list])
 
-    return makers_list
+    return makers_list[Req.start : Req.end] if has_range else makers_list
 
 
 @app.get("/maker/{maker_id}", response_model=MakerResponse)
@@ -706,7 +716,9 @@ async def get_maker(maker_id: int, db: AsyncSession = Depends(get_db)):
         .where(DBMaker.id == maker_id)
         .options(
             selectinload(DBMaker.kiger_characters).selectinload(KigerCharacter.kiger),
-            selectinload(DBMaker.kiger_characters).selectinload(KigerCharacter.character),
+            selectinload(DBMaker.kiger_characters).selectinload(
+                KigerCharacter.character
+            ),
             selectinload(DBMaker.kiger_characters).selectinload(KigerCharacter.maker),
         )
     )
