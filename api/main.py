@@ -4,7 +4,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from typing import Annotated, Optional
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -75,6 +77,13 @@ async def lifespan(app: FastAPI):
     await init_db()
     yield
     await engine.dispose()
+
+
+def req_range(
+    start: Annotated[Optional[int], Query(description="起始索引")] = None,
+    end: Annotated[Optional[int], Query(description="結束索引")] = None,
+) -> ReqRange:
+    return ReqRange(start=start, end=end)
 
 
 app = FastAPI(title="Kigurumi Data API", version="2.0.0", lifespan=lifespan)
@@ -460,7 +469,10 @@ async def submit_maker(maker_data: Maker, db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/kigers", response_model=list[KigerListItemResponse])
-async def get_all_kigers(Req: ReqRange, db: AsyncSession = Depends(get_db)):
+async def get_all_kigers(
+    Req: Annotated[ReqRange, Depends(req_range)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     """取得所有 Kiger 資料"""
     cache_key = "all_kigers"
 
@@ -547,7 +559,10 @@ async def get_kiger(kiger_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/characters", response_model=list[CharacterListItemResponse])
-async def get_all_characters(Req: ReqRange, db: AsyncSession = Depends(get_db)):
+async def get_all_characters(
+    Req: Annotated[ReqRange, Depends(req_range)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     """取得所有 Character 資料"""
     cache_key = "all_characters"
 
@@ -674,7 +689,10 @@ async def get_all_sources(db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/makers", response_model=list[MakerListItemResponse])
-async def get_all_makers(Req: ReqRange, db: AsyncSession = Depends(get_db)):
+async def get_all_makers(
+    Req: Annotated[ReqRange, Depends(req_range)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     """取得所有 Maker 資料"""
     cache_key = "all_makers"
 
